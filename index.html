@@ -1,0 +1,2312 @@
+<!DOCTYPE html>
+<html lang="en" data-mode="dark" data-textsize="medium">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0d1117" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="AlertMyTown" />
+<meta name="description" content="Real-time National Weather Service alerts for your location." />
+<link rel="manifest" href="./manifest.json" />
+<link rel="icon" href="./icon.svg" type="image/svg+xml" />
+<link rel="apple-touch-icon" href="./icon.svg" />
+<title>AlertMyTown — Weather Alerts</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* =====================================================
+     DESIGN TOKENS
+     Grounded in the subject: NOAA/NWS instrument displays.
+     Mono face for data/readouts, system sans for prose.
+     Accent = the real NWS "Advisory" khaki, not a generic accent.
+     ===================================================== */
+  :root{
+    --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+    --font-body: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+
+    --ink: #0d1117;
+    --ink-1: #131a24;
+    --panel: rgba(255,255,255,0.055);
+    --panel-strong: rgba(255,255,255,0.10);
+    --border: rgba(255,255,255,0.12);
+    --border-soft: rgba(255,255,255,0.07);
+    --text-1: #eef2f8;
+    --text-2: #9aa7bd;
+    --text-3: #667088;
+
+    --signal: #c69749;       /* signature amber/khaki — matches real NWS Advisory color */
+    --signal-soft: rgba(198,151,73,0.16);
+
+    --sev-warning: #e8393a;
+    --sev-watch: #f5a623;
+    --sev-advisory: #c69749;
+    --sev-statement: #4a90d9;
+    --sev-special: #9b6bd6;
+    --sev-info: #7d879a;
+
+    --radius-lg: 22px;
+    --radius-md: 15px;
+    --radius-sm: 10px;
+    --shadow-lg: 0 24px 60px rgba(0,0,0,0.5);
+    --shadow-md: 0 10px 30px rgba(0,0,0,0.35);
+
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+
+    color-scheme: dark;
+  }
+
+  html[data-mode="light"]{
+    --ink: #eef1f7;
+    --ink-1: #e4e9f2;
+    --panel: rgba(13,17,23,0.05);
+    --panel-strong: rgba(13,17,23,0.08);
+    --border: rgba(13,17,23,0.12);
+    --border-soft: rgba(13,17,23,0.07);
+    --text-1: #11151d;
+    --text-2: #4b5568;
+    --text-3: #74809a;
+    color-scheme: light;
+  }
+
+  html[data-textsize="small"]{ font-size: 14px; }
+  html[data-textsize="medium"]{ font-size: 16px; }
+  html[data-textsize="large"]{ font-size: 18.5px; }
+
+  *,*::before,*::after{ box-sizing:border-box; }
+  html,body{ height:100%; }
+  body{
+    margin:0;
+    font-family: var(--font-body);
+    background: var(--ink);
+    color: var(--text-1);
+    overscroll-behavior-y: none;
+    -webkit-tap-highlight-color: transparent;
+    position:relative;
+    min-height:100%;
+  }
+  @media (prefers-reduced-motion: reduce){
+    *{ animation-duration:0.01ms !important; animation-iteration-count:1 !important; transition-duration:0.01ms !important; }
+  }
+  button{ font-family:inherit; }
+  input{ font-family:inherit; }
+  h1,h2,h3,p{ margin:0; }
+  a{ color: var(--signal); }
+  :focus-visible{ outline: 2px solid var(--signal); outline-offset: 2px; }
+
+  /* =====================================================
+     AMBIENT WEATHER BACKGROUND
+     ===================================================== */
+  #sky-a, #sky-b{
+    position:fixed; inset:0; z-index:0;
+    transition: opacity 1.4s ease;
+  }
+  #sky-b{ opacity:0; }
+
+  #bg-canvas{
+    position:fixed; inset:0; z-index:1; pointer-events:none;
+  }
+
+  #bg-overlay{ position:fixed; inset:0; z-index:1; pointer-events:none; overflow:hidden; }
+
+  .cloud-layer{ position:absolute; inset:0; opacity:0; transition:opacity 1.2s ease; }
+  .cloud{
+    position:absolute; border-radius:50%;
+    background: radial-gradient(circle at 35% 35%, rgba(255,255,255,0.22), rgba(255,255,255,0.03) 70%);
+    filter: blur(6px);
+  }
+  #bg-overlay[data-theme="cloudy"] .cloud-layer,
+  #bg-overlay[data-theme="rain"] .cloud-layer,
+  #bg-overlay[data-theme="thunderstorm"] .cloud-layer,
+  #bg-overlay[data-theme="snow"] .cloud-layer{ opacity:1; }
+
+  .fog-layer{ position:absolute; inset:0; opacity:0; transition:opacity 1.2s ease; }
+  .fog-band{
+    position:absolute; left:-20%; width:140%; height:14%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.16), transparent);
+    filter: blur(3px);
+    animation: fog-drift linear infinite;
+  }
+  #bg-overlay[data-theme="fog"] .fog-layer{ opacity:1; }
+  @keyframes fog-drift{ from{ transform:translateX(-8%);} to{ transform:translateX(8%);} }
+
+  .lightning-flash{
+    position:absolute; inset:0; background:#dfe8ff; opacity:0;
+  }
+  .lightning-flash.flash-active{ opacity:0.35; transition:opacity 0.06s ease-out; }
+  .lightning-flash:not(.flash-active){ transition:opacity 0.35s ease-out; }
+
+  .tornado-funnel{
+    position:absolute; left:50%; top:12%; width:150px; height:64vh; transform:translateX(-50%);
+    clip-path: polygon(46% 0%, 54% 0%, 88% 100%, 12% 100%);
+    overflow:hidden; opacity:0; transition:opacity 1.2s ease; filter:blur(0.5px);
+  }
+  #bg-overlay[data-theme="tornado"] .tornado-funnel{ opacity:0.85; }
+  .tornado-funnel::before{
+    content:''; position:absolute; top:-40%; left:-40%; width:180%; height:180%;
+    background: repeating-conic-gradient(from 0deg, rgba(130,150,120,0.65) 0deg 10deg, rgba(40,50,38,0.30) 10deg 20deg);
+    animation: tornado-spin 1.5s linear infinite;
+  }
+  @keyframes tornado-spin{ to{ transform:rotate(360deg); } }
+
+  .celestial{ position:absolute; width:64px; height:64px; border-radius:50%; opacity:0; transition:opacity 1.2s ease; top:14%; right:14%; }
+  #bg-overlay[data-theme="clear-day"] .celestial{
+    opacity:1; background: radial-gradient(circle, #fff6d8 0%, #ffdf8a 45%, rgba(255,223,138,0) 72%);
+    box-shadow: 0 0 60px 20px rgba(255,223,138,0.35);
+    animation: sun-pulse 5s ease-in-out infinite;
+  }
+  #bg-overlay[data-theme="clear-night"] .celestial{
+    opacity:1; background: radial-gradient(circle at 35% 35%, #f4f6fb 0%, #cfd7e6 55%, rgba(207,215,230,0) 75%);
+    box-shadow: 0 0 40px 10px rgba(210,220,240,0.25);
+  }
+  @keyframes sun-pulse{ 0%,100%{ transform:scale(1);} 50%{ transform:scale(1.06);} }
+
+  .stars{ position:absolute; inset:0; opacity:0; transition:opacity 1.2s ease; }
+  #bg-overlay[data-theme="clear-night"] .stars{ opacity:1; }
+  .star{ position:absolute; width:2px; height:2px; background:#fff; border-radius:50%; animation:twinkle ease-in-out infinite; }
+  @keyframes twinkle{ 0%,100%{ opacity:0.25; } 50%{ opacity:1; } }
+
+  .radar-sweep-ambient{
+    position:absolute; top:-10%; right:-10%; width:70vmin; height:70vmin; border-radius:50%;
+    opacity:0.05; pointer-events:none;
+    background: conic-gradient(from 0deg, var(--signal) 0deg, transparent 18deg 360deg);
+    animation: sweep-rotate 9s linear infinite;
+  }
+  @keyframes sweep-rotate{ to{ transform:rotate(360deg); } }
+
+  /* The clear-day sky gradient (bright blue, nearly white near the horizon)
+     is far lighter than every other weather theme. In dark mode that leaves
+     the near-white card text/warnings sitting on a bright background with
+     poor contrast. This scrim gently darkens the sky — only on clear-day,
+     only in dark mode (light mode already uses dark text, so it doesn't
+     need it) — without touching the actual text colors or panel styling. */
+  .daylight-scrim{
+    position:absolute; inset:0; opacity:0; transition:opacity 1.2s ease; pointer-events:none;
+    background: linear-gradient(180deg, rgba(4,10,20,0.10) 0%, rgba(4,10,20,0.38) 100%);
+  }
+  html:not([data-mode="light"]) #bg-overlay[data-theme="clear-day"] .daylight-scrim{ opacity:1; }
+
+  /* =====================================================
+     LAYOUT / SCREENS
+     ===================================================== */
+  #app{ position:relative; z-index:2; min-height:100%; }
+  .screen{ display:none; min-height:100dvh; padding-top:var(--safe-top); padding-bottom:var(--safe-bottom); }
+  .screen.is-active{ display:flex; flex-direction:column; }
+
+  .btn{
+    font-family: var(--font-mono); font-weight:600; letter-spacing:0.02em;
+    border-radius: var(--radius-md); border:1px solid transparent; cursor:pointer;
+    padding:14px 20px; font-size:0.95rem; transition: transform 0.15s ease, background 0.2s ease, border-color .2s ease;
+    display:inline-flex; align-items:center; justify-content:center; gap:8px;
+  }
+  .btn:active{ transform: scale(0.97); }
+  .btn-primary{ background: var(--signal); color:#1a1305; border-color:var(--signal); }
+  .btn-secondary{ background: var(--panel-strong); color: var(--text-1); border-color: var(--border); }
+  .btn-ghost{ background:transparent; color: var(--text-2); border-color: transparent; }
+  .btn-lg{ width:100%; padding:16px 20px; font-size:1rem; }
+  .btn-danger-outline{ background:transparent; color:var(--sev-warning); border-color:rgba(232,57,58,0.4); }
+
+  .icon-btn{
+    width:42px; height:42px; border-radius:50%; border:1px solid var(--border);
+    background: var(--panel); color:var(--text-1); font-size:1.05rem; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+  }
+
+  /* ---------- ONBOARDING ---------- */
+  #screen-onboarding{ align-items:center; justify-content:center; padding:32px; text-align:center; }
+  .onboard-content{ max-width:420px; display:flex; flex-direction:column; align-items:center; gap:18px; }
+  .brand-mark{ font-size:3rem; filter: drop-shadow(0 8px 24px rgba(0,0,0,0.4)); }
+  .onboard-eyebrow{
+    font-family:var(--font-mono); font-size:0.72rem; letter-spacing:0.16em; text-transform:uppercase;
+    color: var(--signal); border:1px solid var(--signal-soft); background:var(--signal-soft);
+    padding:5px 10px; border-radius:999px;
+  }
+  .onboard-title{ font-family:var(--font-mono); font-size:2.1rem; font-weight:700; letter-spacing:-0.01em; }
+  .onboard-sub{ color: var(--text-2); font-size:1rem; line-height:1.55; }
+  #screen-onboarding .btn-primary{ margin-top:8px; max-width:280px; }
+  .onboard-skip-note{ font-size:0.78rem; color:var(--text-3); font-family:var(--font-mono); }
+
+  /* ---------- LOCATION ---------- */
+  #screen-location{ padding:20px; }
+  .loc-content{ max-width:460px; margin:0 auto; width:100%; display:flex; flex-direction:column; gap:16px; padding-top:8px; }
+  .back-btn{ align-self:flex-start; }
+  .screen-title{ font-family:var(--font-mono); font-size:1.35rem; font-weight:700; margin-top:6px; }
+  .divider{ display:flex; align-items:center; gap:12px; color:var(--text-3); font-family:var(--font-mono); font-size:0.75rem; text-transform:uppercase; letter-spacing:0.1em; }
+  .divider::before,.divider::after{ content:''; flex:1; height:1px; background:var(--border); }
+  .search-wrap{ position:relative; }
+  #location-search{
+    width:100%; padding:15px 16px; border-radius:var(--radius-md); border:1px solid var(--border);
+    background: var(--panel); color:var(--text-1); font-size:1rem; outline:none;
+  }
+  #location-search:focus{ border-color: var(--signal); }
+  .search-results{
+    margin-top:8px; border-radius:var(--radius-md); overflow:hidden; border:1px solid var(--border-soft);
+    max-height:260px; overflow-y:auto;
+  }
+  .search-result-item{
+    padding:13px 14px; background:var(--panel); border-bottom:1px solid var(--border-soft);
+    cursor:pointer; font-size:0.92rem; display:flex; flex-direction:column; gap:2px;
+  }
+  .search-result-item:last-child{ border-bottom:none; }
+  .search-result-item:active{ background:var(--panel-strong); }
+  .search-result-sub{ font-size:0.76rem; color:var(--text-3); font-family:var(--font-mono); }
+  .search-empty, .search-loading{ padding:12px 14px; color:var(--text-3); font-size:0.85rem; font-family:var(--font-mono); }
+  .error-text{ color:var(--sev-warning); font-size:0.85rem; text-align:center; }
+
+  /* ---------- LOADING ---------- */
+  #screen-loading{ align-items:center; justify-content:center; padding:32px; text-align:center; }
+  .loading-content{ display:flex; flex-direction:column; align-items:center; gap:16px; max-width:360px; }
+  .radar-loader{
+    width:96px; height:96px; border-radius:50%; border:1.5px solid var(--border);
+    position:relative; overflow:hidden; background:radial-gradient(circle, rgba(198,151,73,0.08), transparent 70%);
+  }
+  .radar-loader::before{
+    content:''; position:absolute; inset:0; border-radius:50%;
+    background: repeating-radial-gradient(circle, transparent 0, transparent 14px, var(--border-soft) 15px);
+  }
+  .radar-sweep-arm{
+    position:absolute; inset:0; border-radius:50%;
+    background: conic-gradient(from 0deg, var(--signal) 0deg, transparent 30deg 360deg);
+    animation: sweep-rotate 1.8s linear infinite;
+    opacity:0.85;
+  }
+  .loading-title{ font-family:var(--font-mono); font-size:1.15rem; font-weight:600; }
+  .loading-sub{ color:var(--text-2); font-size:0.9rem; }
+  .loading-error{ display:flex; flex-direction:column; gap:10px; margin-top:6px; width:100%; }
+  .loading-error p{ color:var(--sev-warning); font-size:0.88rem; }
+
+  /* ---------- HOME ---------- */
+  #screen-home{ padding:0; }
+  #screen-home.is-active{ height:100dvh; overflow:hidden; }
+  .home-header{
+    position:sticky; top:0; z-index:5; display:flex; align-items:center; justify-content:space-between;
+    padding:calc(var(--safe-top) + 14px) 16px 12px; backdrop-filter: blur(16px);
+    background: linear-gradient(180deg, rgba(13,17,23,0.75), rgba(13,17,23,0.35));
+    border-bottom:1px solid var(--border-soft);
+  }
+  html[data-mode="light"] .home-header{ background: linear-gradient(180deg, rgba(238,241,247,0.8), rgba(238,241,247,0.4)); }
+  .loc-chip{
+    display:flex; align-items:center; gap:7px; background:var(--panel); border:1px solid var(--border);
+    padding:8px 13px; border-radius:999px; color:var(--text-1); font-weight:600; font-size:0.92rem; cursor:pointer;
+    max-width:62%;
+  }
+  .loc-chip span:last-child{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .header-actions{ display:flex; align-items:center; gap:10px; }
+  .updated-label{ font-family:var(--font-mono); font-size:0.68rem; color:var(--text-3); white-space:nowrap; }
+
+  .home-scroll{ flex:1 1 auto; min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:16px 16px calc(40px + var(--safe-bottom)); }
+  .pull-indicator{
+    text-align:center; font-family:var(--font-mono); font-size:0.72rem; color:var(--text-3);
+    height:0; overflow:hidden; opacity:0; transition:opacity 0.2s ease; margin-top:-6px;
+  }
+  .pull-indicator.is-visible{ opacity:1; }
+
+  .conditions-card{
+    background: var(--panel); border:1px solid var(--border); border-radius: var(--radius-lg);
+    padding:20px; margin-bottom:18px; display:flex; align-items:center; gap:16px; backdrop-filter: blur(10px);
+  }
+  .cond-temp{ font-family:var(--font-mono); font-size:2.6rem; font-weight:700; }
+  .cond-desc{ font-weight:600; font-size:1rem; }
+  .cond-sub{ color:var(--text-2); font-size:0.82rem; margin-top:3px; font-family:var(--font-mono); }
+
+  .section-title{
+    font-family:var(--font-mono); font-size:0.78rem; letter-spacing:0.12em; text-transform:uppercase;
+    color:var(--text-2); margin-bottom:10px; font-weight:600;
+  }
+  .alerts-section{ margin-bottom:22px; }
+  .alerts-list{ display:flex; flex-direction:column; gap:10px; }
+  .alerts-list.is-collapsed{ display:none; }
+
+  .alert-card{
+    display:flex; gap:12px; padding:14px 15px; border-radius:var(--radius-md);
+    background:var(--panel); border:1px solid var(--border); border-left:4px solid var(--sev-info);
+    cursor:pointer; text-align:left; width:100%; color:inherit;
+  }
+  .alert-card:active{ background:var(--panel-strong); }
+  .alert-card[data-severity="warning"]{ border-left-color: var(--sev-warning); }
+  .alert-card[data-severity="watch"]{ border-left-color: var(--sev-watch); }
+  .alert-card[data-severity="advisory"]{ border-left-color: var(--sev-advisory); }
+  .alert-card[data-severity="statement"]{ border-left-color: var(--sev-statement); }
+  .alert-card[data-severity="special"]{ border-left-color: var(--sev-special); }
+  .alert-card[data-severity="info"]{ border-left-color: var(--sev-info); }
+  .alert-card.is-tornado-warning{ background: linear-gradient(90deg, rgba(232,57,58,0.16), var(--panel) 60%); animation: tornado-card-pulse 1.6s ease-in-out infinite; }
+  @keyframes tornado-card-pulse{ 0%,100%{ box-shadow:0 0 0 rgba(232,57,58,0);} 50%{ box-shadow:0 0 0 3px rgba(232,57,58,0.18);} }
+  .alert-icon{ font-size:1.4rem; line-height:1; }
+  .alert-card-body{ flex:1; min-width:0; }
+  .alert-card-top{ display:flex; align-items:center; gap:8px; margin-bottom:3px; flex-wrap:wrap; }
+  .alert-event{ font-weight:700; font-size:0.96rem; }
+  .severity-chip{
+    font-family:var(--font-mono); font-size:0.62rem; text-transform:uppercase; letter-spacing:0.08em;
+    padding:2px 7px; border-radius:999px; font-weight:600;
+  }
+  .severity-chip[data-severity="warning"]{ background:rgba(232,57,58,0.18); color:#ff9d9d; }
+  .severity-chip[data-severity="watch"]{ background:rgba(245,166,35,0.18); color:#ffcb7a; }
+  .severity-chip[data-severity="advisory"]{ background:rgba(198,151,73,0.2); color:#e4bd83; }
+  .severity-chip[data-severity="statement"]{ background:rgba(74,144,217,0.18); color:#9dc6f2; }
+  .severity-chip[data-severity="special"]{ background:rgba(155,107,214,0.18); color:#cbb0ec; }
+  .severity-chip[data-severity="info"]{ background:rgba(125,135,154,0.2); color:#c2c9d6; }
+  .alert-area{ font-size:0.82rem; color:var(--text-2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .alert-meta-row{ display:flex; gap:12px; margin-top:6px; font-family:var(--font-mono); font-size:0.68rem; color:var(--text-3); }
+
+  .empty-state{ display:flex; flex-direction:column; align-items:center; gap:8px; padding:34px 16px; color:var(--text-2); text-align:center; background:var(--panel); border:1px solid var(--border-soft); border-radius:var(--radius-lg); }
+  .empty-state[hidden]{ display:none; }
+  .empty-icon{ font-size:1.8rem; }
+
+  .forecast-section{ margin-bottom:22px; }
+  .forecast-strip{ display:flex; gap:10px; overflow-x:auto; padding-bottom:4px; scrollbar-width:none; }
+  .forecast-strip::-webkit-scrollbar{ display:none; }
+  .forecast-card{
+    flex:0 0 auto; width:92px; background:var(--panel); border:1px solid var(--border-soft); border-radius:var(--radius-md);
+    padding:12px 8px; text-align:center; display:flex; flex-direction:column; gap:6px; align-items:center;
+  }
+  .forecast-period{ font-family:var(--font-mono); font-size:0.66rem; text-transform:uppercase; color:var(--text-3); letter-spacing:0.05em; }
+  .forecast-emoji{ font-size:1.4rem; }
+  .forecast-temp{ font-family:var(--font-mono); font-weight:700; font-size:1rem; }
+
+  .radar-section{ margin-bottom:22px; }
+  .radar-frame{ border-radius:var(--radius-lg); overflow:hidden; border:1px solid var(--border); background:#000; position:relative; aspect-ratio: 1 / 1; max-height:320px; }
+  .radar-frame img{ width:100%; height:100%; object-fit:cover; display:block; }
+  .radar-fallback-link{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:var(--panel); color:var(--signal); font-family:var(--font-mono); font-size:0.82rem; text-align:center; padding:20px; text-decoration:none; }
+
+  .recent-section{ margin-bottom:22px; }
+  .section-toggle{ display:flex; align-items:center; justify-content:space-between; width:100%; background:none; border:none; cursor:pointer; padding:0; }
+  .chevron{ color:var(--text-3); transition:transform 0.2s ease; margin-bottom:10px; }
+  .chevron.is-open{ transform:rotate(180deg); }
+  .alert-card.is-recent{ opacity:0.68; }
+
+  .data-credit{ text-align:center; font-family:var(--font-mono); font-size:0.68rem; color:var(--text-3); padding-top:8px; }
+
+  /* ---------- BANNER ---------- */
+  #banner-container{ position:fixed; top:0; left:0; right:0; z-index:50; display:flex; flex-direction:column; align-items:center; padding-top:var(--safe-top); pointer-events:none; }
+  .alert-banner{
+    pointer-events:auto; margin-top:10px; width:min(92%, 440px); background:var(--ink-1); border:1px solid var(--border);
+    border-left:4px solid var(--sev-statement); border-radius:var(--radius-md); box-shadow:var(--shadow-lg);
+    padding:13px 14px; display:flex; gap:11px; align-items:flex-start; cursor:pointer;
+    transform:translateY(-140%); transition:transform 0.35s cubic-bezier(.2,.8,.2,1);
+    backdrop-filter: blur(14px);
+  }
+  .alert-banner.is-shown{ transform:translateY(0); }
+  .alert-banner[data-severity="warning"]{ border-left-color:var(--sev-warning); }
+  .alert-banner[data-severity="watch"]{ border-left-color:var(--sev-watch); }
+  .alert-banner[data-severity="advisory"]{ border-left-color:var(--sev-advisory); }
+  .alert-banner[data-severity="statement"]{ border-left-color:var(--sev-statement); }
+  .alert-banner[data-severity="special"]{ border-left-color:var(--sev-special); }
+  .alert-banner.is-tornado{ border-left-color:var(--sev-warning); background: linear-gradient(90deg, rgba(232,57,58,0.22), var(--ink-1) 65%); }
+  .banner-icon{ font-size:1.3rem; }
+  .banner-title{ font-weight:700; font-size:0.9rem; }
+  .banner-sub{ color:var(--text-2); font-size:0.78rem; margin-top:2px; }
+  .banner-count{ font-family:var(--font-mono); font-size:0.66rem; color:var(--text-3); margin-top:4px; }
+  .banner-close{ background:none; border:none; color:var(--text-3); font-size:1rem; cursor:pointer; padding:2px; }
+
+  /* ---------- MODAL / SETTINGS SHARED ---------- */
+  .modal-backdrop{
+    position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:60; display:flex; align-items:flex-end;
+    opacity:0; pointer-events:none; transition:opacity 0.25s ease;
+  }
+  .modal-backdrop.is-open{ opacity:1; pointer-events:auto; }
+  @media (min-width:640px){ .modal-backdrop{ align-items:center; justify-content:center; } }
+
+  .modal{
+    background:var(--ink-1); border:1px solid var(--border); border-bottom:none;
+    border-radius:22px 22px 0 0; width:100%; max-width:520px; max-height:88dvh; overflow-y:auto;
+    transform:translateY(30px); transition:transform 0.3s cubic-bezier(.2,.8,.2,1);
+    padding-bottom: calc(20px + var(--safe-bottom));
+  }
+  .modal-backdrop.is-open .modal{ transform:translateY(0); }
+  @media (min-width:640px){ .modal{ border-radius:22px; border-bottom:1px solid var(--border); max-height:80dvh; } }
+
+  .modal-header{ display:flex; align-items:center; justify-content:space-between; padding:18px 18px 8px; position:sticky; top:0; background:var(--ink-1); z-index:2; }
+  .alert-modal-badge{ font-family:var(--font-mono); font-size:0.72rem; text-transform:uppercase; letter-spacing:0.08em; padding:5px 11px; border-radius:999px; font-weight:700; background:rgba(125,135,154,0.2); color:#c2c9d6; }
+  .alert-modal-badge[data-severity="warning"]{ background:rgba(232,57,58,0.18); color:#ff9d9d; }
+  .alert-modal-badge[data-severity="watch"]{ background:rgba(245,166,35,0.18); color:#ffcb7a; }
+  .alert-modal-badge[data-severity="advisory"]{ background:rgba(198,151,73,0.2); color:#e4bd83; }
+  .alert-modal-badge[data-severity="statement"]{ background:rgba(74,144,217,0.18); color:#9dc6f2; }
+  .alert-modal-badge[data-severity="special"]{ background:rgba(155,107,214,0.18); color:#cbb0ec; }
+  .alert-modal-badge[data-severity="info"]{ background:rgba(125,135,154,0.2); color:#c2c9d6; }
+  /* Colorblind-friendly mode: don't rely on hue alone. Swap in a
+     higher-contrast, colorblind-safe palette (Okabe–Ito) AND give every
+     severity a distinct border style + a distinct glyph, so severity is
+     readable from shape/symbol/text even if the color differences vanish. */
+  body.colorblind-mode{
+    --sev-warning: #D55E00;
+    --sev-watch: #E69F00;
+    --sev-advisory: #F0E442;
+    --sev-statement: #0072B2;
+    --sev-special: #CC79A7;
+    --sev-info: #009E73;
+  }
+  body.colorblind-mode .alert-card{ border-left-width:8px; }
+  body.colorblind-mode .alert-card[data-severity="warning"]{ border-left-style:solid; }
+  body.colorblind-mode .alert-card[data-severity="watch"]{ border-left-style:dashed; }
+  body.colorblind-mode .alert-card[data-severity="advisory"]{ border-left-style:dotted; }
+  body.colorblind-mode .alert-card[data-severity="statement"]{ border-left-style:double; }
+  body.colorblind-mode .alert-card[data-severity="special"]{ border-left-style:groove; }
+  body.colorblind-mode .alert-card[data-severity="info"]{ border-left-style:ridge; }
+  body.colorblind-mode .severity-chip{ font-weight:800; letter-spacing:0.08em; border:1px solid currentColor; }
+  body.colorblind-mode .severity-chip::before{ margin-right:4px; }
+  body.colorblind-mode .severity-chip[data-severity="warning"]::before{ content:'▲'; }
+  body.colorblind-mode .severity-chip[data-severity="watch"]::before{ content:'◆'; }
+  body.colorblind-mode .severity-chip[data-severity="advisory"]::before{ content:'●'; }
+  body.colorblind-mode .severity-chip[data-severity="statement"]::before{ content:'■'; }
+  body.colorblind-mode .severity-chip[data-severity="special"]::before{ content:'★'; }
+  body.colorblind-mode .severity-chip[data-severity="info"]::before{ content:'○'; }
+  body.colorblind-mode .alert-banner{ border-left-width:7px; }
+  body.colorblind-mode .alert-banner[data-severity="warning"]{ border-left-style:solid; }
+  body.colorblind-mode .alert-banner[data-severity="watch"]{ border-left-style:dashed; }
+  body.colorblind-mode .alert-banner[data-severity="advisory"]{ border-left-style:dotted; }
+  body.colorblind-mode .alert-banner[data-severity="statement"]{ border-left-style:double; }
+  body.colorblind-mode .alert-banner[data-severity="special"]{ border-left-style:groove; }
+  body.colorblind-mode .alert-banner[data-severity="info"]{ border-left-style:ridge; }
+  body.colorblind-mode .alert-modal-badge{ border:1px solid currentColor; font-weight:800; }
+  body.colorblind-mode .alert-modal-badge::before{ margin-right:4px; }
+  body.colorblind-mode .alert-modal-badge[data-severity="warning"]::before{ content:'▲'; }
+  body.colorblind-mode .alert-modal-badge[data-severity="watch"]::before{ content:'◆'; }
+  body.colorblind-mode .alert-modal-badge[data-severity="advisory"]::before{ content:'●'; }
+  body.colorblind-mode .alert-modal-badge[data-severity="statement"]::before{ content:'■'; }
+  body.colorblind-mode .alert-modal-badge[data-severity="special"]::before{ content:'★'; }
+  body.colorblind-mode .alert-modal-badge[data-severity="info"]::before{ content:'○'; }
+  .modal-body{ padding:6px 20px 20px; display:flex; flex-direction:column; gap:16px; }
+  .modal-event-title{ font-family:var(--font-mono); font-size:1.3rem; font-weight:700; line-height:1.3; }
+  .modal-row{ display:flex; flex-direction:column; gap:4px; }
+  .modal-row-label{ font-family:var(--font-mono); font-size:0.68rem; text-transform:uppercase; letter-spacing:0.1em; color:var(--text-3); }
+  .modal-row-value{ font-size:0.93rem; line-height:1.5; color:var(--text-1); white-space:pre-line; }
+  .modal-divider{ height:1px; background:var(--border-soft); }
+  .modal-times{ display:flex; gap:18px; }
+
+  /* ---------- SETTINGS PANEL ---------- */
+  .settings-panel{
+    background:var(--ink-1); border:1px solid var(--border); border-bottom:none;
+    border-radius:22px 22px 0 0; width:100%; max-width:520px; max-height:90dvh; overflow-y:auto;
+    transform:translateY(30px); transition:transform 0.3s cubic-bezier(.2,.8,.2,1);
+    padding-bottom: calc(24px + var(--safe-bottom));
+  }
+  .modal-backdrop.is-open .settings-panel{ transform:translateY(0); }
+  @media (min-width:640px){ .settings-panel{ border-radius:22px; border-bottom:1px solid var(--border); max-height:82dvh; } }
+  .settings-header{ display:flex; align-items:center; justify-content:space-between; padding:18px 18px 10px; position:sticky; top:0; background:var(--ink-1); z-index:2; }
+  .settings-header h2{ font-family:var(--font-mono); font-size:1.15rem; }
+  .settings-body{ padding:4px 18px 10px; display:flex; flex-direction:column; gap:26px; }
+  .settings-section-title{ font-family:var(--font-mono); font-size:0.72rem; text-transform:uppercase; letter-spacing:0.1em; color:var(--signal); margin-bottom:12px; }
+  .settings-row{ display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--border-soft); gap:12px; }
+  .settings-row:last-child{ border-bottom:none; }
+  .settings-row-label{ font-size:0.92rem; font-weight:500; }
+  .settings-row-desc{ font-size:0.76rem; color:var(--text-3); margin-top:2px; }
+
+  .segmented{ display:flex; background:var(--panel); border:1px solid var(--border); border-radius:999px; padding:3px; }
+  .segmented button{ border:none; background:none; color:var(--text-2); font-family:var(--font-mono); font-size:0.78rem; padding:7px 13px; border-radius:999px; cursor:pointer; font-weight:600; }
+  .segmented button.is-active{ background:var(--signal); color:#1a1305; }
+
+  .test-notif-panel{
+    display:grid; grid-template-columns:1fr 1fr; gap:8px;
+    padding:4px 0 14px; border-bottom:1px solid var(--border-soft);
+  }
+  .test-notif-btn{
+    display:flex; align-items:center; gap:8px; font-family:var(--font-mono); font-size:0.78rem; font-weight:600;
+    text-align:left; padding:10px 12px; border-radius:var(--radius-sm); border:1px solid var(--border);
+    background:var(--panel); color:var(--text-1); cursor:pointer; transition:background 0.15s ease, transform 0.1s ease;
+  }
+  .test-notif-btn:active{ transform:scale(0.97); background:var(--panel-strong); }
+  .test-notif-icon{ font-size:1rem; }
+
+  .switch{ position:relative; width:46px; height:27px; flex:0 0 auto; }
+  .switch input{ opacity:0; width:0; height:0; }
+  .switch-track{ position:absolute; inset:0; background:var(--panel-strong); border:1px solid var(--border); border-radius:999px; cursor:pointer; transition:background 0.2s ease; }
+  .switch-track::before{ content:''; position:absolute; width:19px; height:19px; left:3px; top:2.5px; background:var(--text-2); border-radius:50%; transition:transform 0.2s ease, background 0.2s ease; }
+  .switch input:checked + .switch-track{ background: var(--signal-soft); border-color:var(--signal); }
+  .switch input:checked + .switch-track::before{ transform:translateX(19px); background:var(--signal); }
+
+  .radio-option{ display:flex; align-items:center; gap:11px; padding:11px 0; cursor:pointer; }
+  .radio-dot{ width:19px; height:19px; border-radius:50%; border:1.5px solid var(--border); flex:0 0 auto; position:relative; }
+  .radio-option input{ display:none; }
+  .radio-option input:checked + .radio-dot{ border-color:var(--signal); }
+  .radio-option input:checked + .radio-dot::after{ content:''; position:absolute; inset:3px; border-radius:50%; background:var(--signal); }
+  .radio-label{ display:flex; flex-direction:column; gap:2px; }
+  .radio-title{ font-size:0.92rem; font-weight:500; }
+  .radio-sub{ font-size:0.76rem; color:var(--text-3); }
+
+  .locations-list{ display:flex; flex-direction:column; gap:8px; margin-top:4px; }
+  .location-chip-row{ display:flex; align-items:center; justify-content:space-between; background:var(--panel); border:1px solid var(--border-soft); border-radius:var(--radius-sm); padding:10px 12px; }
+  .location-chip-row.is-current{ border-color:var(--signal); }
+  .location-chip-name{ font-size:0.88rem; font-weight:500; }
+  .location-chip-tag{ font-family:var(--font-mono); font-size:0.62rem; color:var(--signal); text-transform:uppercase; }
+  .location-remove{ background:none; border:none; color:var(--text-3); cursor:pointer; font-size:0.95rem; }
+  .about-text{ font-size:0.82rem; color:var(--text-2); line-height:1.6; }
+  .about-text a{ color:var(--signal); }
+
+  .toast{
+    position:fixed; bottom:calc(24px + var(--safe-bottom)); left:50%; transform:translateX(-50%) translateY(20px);
+    background:var(--ink-1); border:1px solid var(--border); color:var(--text-1); padding:11px 18px; border-radius:999px;
+    font-size:0.85rem; z-index:80; opacity:0; transition:opacity 0.25s ease, transform 0.25s ease; pointer-events:none;
+    box-shadow:var(--shadow-md);
+  }
+  .toast.is-shown{ opacity:1; transform:translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+
+  <div id="sky-a"></div>
+  <div id="sky-b"></div>
+  <canvas id="bg-canvas" aria-hidden="true"></canvas>
+  <div id="bg-overlay" data-theme="clear-night" aria-hidden="true">
+    <div class="cloud-layer" id="cloud-layer"></div>
+    <div class="fog-layer" id="fog-layer">
+      <div class="fog-band" style="top:20%; animation-duration:26s;"></div>
+      <div class="fog-band" style="top:45%; animation-duration:34s;"></div>
+      <div class="fog-band" style="top:68%; animation-duration:22s;"></div>
+    </div>
+    <div class="lightning-flash" id="lightning-flash"></div>
+    <div class="tornado-funnel" id="tornado-funnel"></div>
+    <div class="celestial" id="celestial"></div>
+    <div class="stars" id="stars-layer"></div>
+    <div class="radar-sweep-ambient"></div>
+    <div class="daylight-scrim"></div>
+  </div>
+
+  <div id="banner-container" role="status" aria-live="polite"></div>
+  <div id="toast" class="toast"></div>
+
+  <main id="app">
+
+    <!-- ============ ONBOARDING ============ -->
+    <section id="screen-onboarding" class="screen is-active">
+      <div class="onboard-content">
+        <span class="onboard-eyebrow">NWS-CONNECTED</span>
+        <div class="brand-mark">⛈️</div>
+        <h1 class="onboard-title">AlertMyTown</h1>
+        <p class="onboard-sub">Get notified instantly whenever the National Weather Service issues weather alerts for your location.</p>
+        <button class="btn btn-primary btn-lg" id="btn-onboard-continue">Get Started</button>
+        <span class="onboard-skip-note" id="onboard-skip-note"></span>
+      </div>
+    </section>
+
+    <!-- ============ LOCATION ============ -->
+    <section id="screen-location" class="screen">
+      <div class="loc-content">
+        <button class="icon-btn back-btn" id="btn-location-back" aria-label="Back" hidden>←</button>
+        <h2 class="screen-title">Choose your location</h2>
+        <button class="btn btn-primary btn-lg" id="btn-locate-me">📍 Locate Me</button>
+        <div class="divider"><span>or search</span></div>
+        <div class="search-wrap">
+          <input type="text" id="location-search" placeholder="City, ZIP code, or county…" autocomplete="off" inputmode="search" />
+          <div id="search-results" class="search-results" hidden></div>
+        </div>
+        <p id="location-error" class="error-text" hidden></p>
+      </div>
+    </section>
+
+    <!-- ============ LOADING ============ -->
+    <section id="screen-loading" class="screen">
+      <div class="loading-content">
+        <div class="radar-loader"><div class="radar-sweep-arm"></div></div>
+        <h2 class="loading-title" id="loading-title">Loading your current alerts…</h2>
+        <p class="loading-sub" id="loading-sub">Connecting to the National Weather Service…</p>
+        <div id="loading-error-box" class="loading-error" hidden>
+          <p id="loading-error-text"></p>
+          <button class="btn btn-secondary" id="btn-loading-retry">Try again</button>
+          <button class="btn btn-ghost" id="btn-loading-back">Choose a different location</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ HOME ============ -->
+    <section id="screen-home" class="screen">
+      <header class="home-header">
+        <button class="loc-chip" id="btn-change-location">
+          <span class="loc-pin">📍</span>
+          <span id="home-location-name">—</span>
+        </button>
+        <div class="header-actions">
+          <span class="updated-label" id="last-updated-label">—</span>
+          <button class="icon-btn" id="btn-open-settings" aria-label="Settings">⚙️</button>
+        </div>
+      </header>
+
+      <div class="home-scroll" id="home-scroll">
+        <div class="pull-indicator" id="pull-indicator">↓ Release to refresh</div>
+
+        <section class="conditions-card" id="conditions-card" hidden>
+          <div class="cond-temp" id="cond-temp">—°</div>
+          <div class="cond-meta">
+            <div class="cond-desc" id="cond-desc">—</div>
+            <div class="cond-sub" id="cond-sub">—</div>
+          </div>
+        </section>
+
+        <section class="alerts-section">
+          <h2 class="section-title">Current Alerts</h2>
+          <div id="current-alerts-list" class="alerts-list"></div>
+          <div id="no-alerts-empty" class="empty-state" hidden>
+            <div class="empty-icon">✅</div>
+            <p>No active alerts for your location right now.</p>
+          </div>
+        </section>
+
+        <section class="forecast-section" id="forecast-section" hidden>
+          <h2 class="section-title">Forecast</h2>
+          <div class="forecast-strip" id="forecast-strip"></div>
+        </section>
+
+        <section class="radar-section" id="radar-section" hidden>
+          <h2 class="section-title">Live Radar</h2>
+          <div class="radar-frame">
+            <img id="radar-image" alt="Live NWS radar loop" referrerpolicy="no-referrer" />
+            <a id="radar-fallback-link" class="radar-fallback-link" target="_blank" rel="noopener" hidden>Radar preview unavailable —<br>open live radar on weather.gov ↗</a>
+          </div>
+        </section>
+
+        <section class="recent-section" id="recent-section" hidden>
+          <button class="section-toggle" id="btn-toggle-recent">
+            <h2 class="section-title" style="margin-bottom:0;">Recent Alerts</h2>
+            <span class="chevron" id="recent-chevron">▾</span>
+          </button>
+          <div id="recent-alerts-list" class="alerts-list is-collapsed"></div>
+        </section>
+
+        <p class="data-credit">Live data from the National Weather Service · api.weather.gov</p>
+      </div>
+    </section>
+  </main>
+
+  <!-- ============ ALERT DETAIL MODAL ============ -->
+  <div class="modal-backdrop" id="alert-modal-backdrop">
+    <div class="modal alert-modal" role="dialog" aria-modal="true" aria-label="Alert details">
+      <div class="modal-header">
+        <span class="alert-modal-badge" id="modal-badge">Warning</span>
+        <button class="icon-btn" id="btn-close-modal" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+    </div>
+  </div>
+
+  <!-- ============ SETTINGS PANEL ============ -->
+  <div class="modal-backdrop" id="settings-backdrop">
+    <div class="settings-panel" role="dialog" aria-modal="true" aria-label="Settings">
+      <div class="settings-header">
+        <h2>Settings</h2>
+        <button class="icon-btn" id="btn-close-settings" aria-label="Close">✕</button>
+      </div>
+      <div class="settings-body">
+
+        <div>
+          <div class="settings-section-title">Your Location</div>
+          <div class="settings-row">
+            <div>
+              <div class="settings-row-label" id="settings-current-location">—</div>
+              <div class="settings-row-desc">Current location</div>
+            </div>
+            <button class="btn btn-secondary" id="btn-settings-change-location" style="padding:9px 14px; font-size:0.8rem;">Change</button>
+          </div>
+          <div class="locations-list" id="saved-locations-list"></div>
+          <button class="btn btn-ghost" id="btn-save-current-location" style="padding:9px 4px; font-size:0.8rem; justify-content:flex-start;">+ Save current location</button>
+        </div>
+
+        <div>
+          <div class="settings-section-title">Alert Update Timing</div>
+          <label class="radio-option">
+            <input type="radio" name="alert-timing" value="60000" id="timing-60" checked />
+            <span class="radio-dot"></span>
+            <span class="radio-label"><span class="radio-title">Every 1 minute</span><span class="radio-sub">Recommended — default</span></span>
+          </label>
+          <label class="radio-option">
+            <input type="radio" name="alert-timing" value="30000" id="timing-30" />
+            <span class="radio-dot"></span>
+            <span class="radio-label"><span class="radio-title">Every 30 seconds</span><span class="radio-sub">Faster updates — uses more data &amp; battery</span></span>
+          </label>
+        </div>
+
+        <div>
+          <div class="settings-section-title">Appearance</div>
+          <div class="settings-row">
+            <div class="settings-row-label">Theme</div>
+            <div class="segmented" id="theme-segmented">
+              <button data-value="light">Light</button>
+              <button data-value="dark" class="is-active">Dark</button>
+              <button data-value="auto">Auto</button>
+            </div>
+          </div>
+          <div class="settings-row">
+            <div class="settings-row-label">Text size</div>
+            <div class="segmented" id="textsize-segmented">
+              <button data-value="small">A</button>
+              <button data-value="medium" class="is-active">A</button>
+              <button data-value="large">A</button>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div class="settings-section-title">Notifications</div>
+          <div class="settings-row" id="notif-permission-row">
+            <div>
+              <div class="settings-row-label">Push notifications</div>
+              <div class="settings-row-desc" id="notif-permission-desc">Get notified when a new alert is issued</div>
+            </div>
+            <button type="button" class="btn btn-secondary" id="btn-enable-notifications" style="padding:10px 16px;font-size:0.82rem;white-space:nowrap;">Enable</button>
+          </div>
+          <div class="settings-row">
+            <div>
+              <div class="settings-row-label">Test different notifications</div>
+              <div class="settings-row-desc">Preview how each alert type looks and sounds</div>
+            </div>
+            <button type="button" class="btn btn-secondary" id="btn-toggle-test-panel" style="padding:10px 16px;font-size:0.82rem;white-space:nowrap;">Try it</button>
+          </div>
+          <div id="test-notif-panel" class="test-notif-panel" hidden>
+            <button type="button" class="test-notif-btn" data-test-type="tornado"><span class="test-notif-icon">🌪️</span>Tornado Warning</button>
+            <button type="button" class="test-notif-btn" data-test-type="warning"><span class="test-notif-icon">⚠️</span>Warning</button>
+            <button type="button" class="test-notif-btn" data-test-type="watch"><span class="test-notif-icon">👀</span>Watch</button>
+            <button type="button" class="test-notif-btn" data-test-type="advisory"><span class="test-notif-icon">📋</span>Advisory</button>
+            <button type="button" class="test-notif-btn" data-test-type="statement"><span class="test-notif-icon">🗒️</span>Statement</button>
+            <button type="button" class="test-notif-btn" data-test-type="special"><span class="test-notif-icon">✨</span>Special Statement</button>
+            <button type="button" class="test-notif-btn" data-test-type="info"><span class="test-notif-icon">ℹ️</span>Informational</button>
+          </div>
+          <div class="settings-row">
+            <div>
+              <div class="settings-row-label">Alert sound</div>
+              <div class="settings-row-desc">Plays a tone for new &amp; updated alerts</div>
+            </div>
+            <label class="switch"><input type="checkbox" id="toggle-sound" checked /><span class="switch-track"></span></label>
+          </div>
+          <div class="settings-row">
+            <div>
+              <div class="settings-row-label">Warnings</div>
+              <div class="settings-row-desc">Tornado Warnings always notify, even if this is off</div>
+            </div>
+            <label class="switch"><input type="checkbox" id="toggle-cat-warning" checked /><span class="switch-track"></span></label>
+          </div>
+          <div class="settings-row">
+            <div class="settings-row-label">Watches</div>
+            <label class="switch"><input type="checkbox" id="toggle-cat-watch" checked /><span class="switch-track"></span></label>
+          </div>
+          <div class="settings-row">
+            <div class="settings-row-label">Advisories</div>
+            <label class="switch"><input type="checkbox" id="toggle-cat-advisory" checked /><span class="switch-track"></span></label>
+          </div>
+          <div class="settings-row">
+            <div class="settings-row-label">Statements</div>
+            <label class="switch"><input type="checkbox" id="toggle-cat-statement" checked /><span class="switch-track"></span></label>
+          </div>
+          <div class="settings-row">
+            <div class="settings-row-label">Special weather statements</div>
+            <label class="switch"><input type="checkbox" id="toggle-cat-special" checked /><span class="switch-track"></span></label>
+          </div>
+          <div class="settings-row">
+            <div class="settings-row-label">Informational</div>
+            <label class="switch"><input type="checkbox" id="toggle-cat-info" checked /><span class="switch-track"></span></label>
+          </div>
+        </div>
+
+        <div>
+          <div class="settings-section-title">Accessibility</div>
+          <div class="settings-row">
+            <div>
+              <div class="settings-row-label">Colorblind-friendly colors</div>
+              <div class="settings-row-desc">Adds shape/label cues beyond color</div>
+            </div>
+            <label class="switch"><input type="checkbox" id="toggle-colorblind" /><span class="switch-track"></span></label>
+          </div>
+        </div>
+
+        <div>
+          <div class="settings-section-title">About</div>
+          <p class="about-text">AlertMyTown pulls live alerts, forecasts, and radar directly from the National Weather Service public API (api.weather.gov) — no account or key required.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+'use strict';
+/* ============ 1. STATE & CONFIG ============ */
+const NWS_BASE = 'https://api.weather.gov';
+const NOMINATIM_BASE = 'https://nominatim.openstreetmap.org/search';
+const RECENT_ALERT_WINDOW_MS = 48 * 60 * 60 * 1000;   // keep expired alerts visible 48h
+const CONDITIONS_REFRESH_MS = 10 * 60 * 1000;          // forecast/observation refresh cadence
+
+const DEFAULT_SETTINGS = {
+  theme: 'dark',
+  textSize: 'medium',
+  colorblind: false,
+  soundEnabled: true,
+  alertTimingMs: 60000,
+  categoryToggles: { warning:true, watch:true, advisory:true, statement:true, special:true, info:true }
+};
+
+const state = {
+  screen: 'onboarding',
+  location: null,            // { label, lat, lon }
+  savedLocations: [],        // [{ label, lat, lon }]
+  settings: JSON.parse(JSON.stringify(DEFAULT_SETTINGS)),
+  points: null,               // raw NWS /points properties
+  currentConditions: null,
+  forecastPeriods: [],
+  isDaytime: (new Date().getHours() >= 7 && new Date().getHours() < 20),
+  activeAlerts: new Map(),    // id -> alert
+  recentAlerts: [],           // [{...alert, expiredAt}]
+  bannerQueue: [],
+  bannerShowing: false,
+  bannerTimer: null,
+  pollTimer: null,
+  conditionsTimer: null,
+  clockTimer: null,
+  lastUpdated: null,
+  audioCtx: null,
+  audioUnlocked: false,
+  notificationPermissionAsked: false,
+  onboardingTimer: null,
+  searchAbortToken: 0,
+};
+
+/* ============ 2. STORAGE ============ */
+// Persists across sessions using localStorage. (Earlier build used the Claude
+// artifact-preview's window.storage API, which only exists inside claude.ai —
+// on a real hosted origin like this one, window.storage is always undefined,
+// so nothing ever got saved and every visit looked like a fresh install.)
+const STORAGE_KEY = 'alertmytown:user-config';
+const STORAGE_AVAILABLE = (function(){
+  try{
+    if(typeof window === 'undefined' || !window.localStorage) return false;
+    const t = '__amt_test__';
+    window.localStorage.setItem(t, '1');
+    window.localStorage.removeItem(t);
+    return true;
+  }catch(e){ return false; } // e.g. Safari private mode can throw
+})();
+
+async function loadUserConfig(){
+  if(!STORAGE_AVAILABLE) return null;
+  try{
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if(raw) return JSON.parse(raw);
+  }catch(e){ /* no saved config yet, or it was corrupted — first run */ }
+  return null;
+}
+
+async function saveUserConfig(){
+  if(!STORAGE_AVAILABLE) return;
+  try{
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      location: state.location,
+      savedLocations: state.savedLocations,
+      settings: state.settings
+    }));
+  }catch(e){ console.warn('AlertMyTown: could not save settings', e); }
+}
+
+/* ============ 3. UTILITIES ============ */
+function $(sel, root){ return (root || document).querySelector(sel); }
+function $all(sel, root){ return Array.from((root || document).querySelectorAll(sel)); }
+
+function debounce(fn, ms){
+  let t = null;
+  return function(...args){ clearTimeout(t); t = setTimeout(()=> fn.apply(this,args), ms); };
+}
+
+function safeArray(x){ return Array.isArray(x) ? x : []; }
+
+function escapeHtml(str){
+  if(str == null) return '';
+  return String(str)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+function formatClockTime(isoString){
+  if(!isoString) return '—';
+  try{ return new Date(isoString).toLocaleTimeString(undefined, { hour:'numeric', minute:'2-digit' }); }
+  catch(e){ return '—'; }
+}
+
+function formatFullDateTime(isoString){
+  if(!isoString) return '—';
+  try{ return new Date(isoString).toLocaleString(undefined, { weekday:'short', month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }); }
+  catch(e){ return '—'; }
+}
+
+function relativeTimeFromNow(isoOrDate){
+  if(!isoOrDate) return '—';
+  const then = (isoOrDate instanceof Date) ? isoOrDate : new Date(isoOrDate);
+  const diffSec = Math.round((Date.now() - then.getTime())/1000);
+  if(diffSec < 5) return 'just now';
+  if(diffSec < 60) return diffSec + 's ago';
+  const diffMin = Math.round(diffSec/60);
+  if(diffMin < 60) return diffMin + 'm ago';
+  const diffHr = Math.round(diffMin/60);
+  if(diffHr < 24) return diffHr + 'h ago';
+  return Math.round(diffHr/24) + 'd ago';
+}
+
+function cToF(celsius){
+  if(celsius == null || isNaN(celsius)) return null;
+  return Math.round((celsius * 9/5) + 32);
+}
+
+function quantityToMph(q){
+  if(!q || q.value == null) return null;
+  const unit = (q.unitCode || '').toLowerCase();
+  let mph = q.value;
+  if(unit.includes('km_h')) mph = q.value * 0.621371;
+  else if(unit.includes('m_s')) mph = q.value * 2.23694;
+  return Math.round(mph);
+}
+
+function classifySeverity(eventName){
+  const e = (eventName || '').toLowerCase();
+  if(e.includes('special weather statement')) return 'special';
+  if(e.includes('warning')) return 'warning';
+  if(e.includes('watch')) return 'watch';
+  if(e.includes('advisory')) return 'advisory';
+  if(e.includes('statement')) return 'statement';
+  return 'info';
+}
+
+function isTornadoWarning(eventName){
+  const e = (eventName || '').toLowerCase();
+  return e.includes('tornado warning') || e.includes('tornado emergency');
+}
+
+const EVENT_ICON_RULES = [
+  [/tornado/i, '🌪️'],
+  [/hurricane|typhoon/i, '🌀'],
+  [/tropical storm/i, '🌀'],
+  [/thunderstorm/i, '⛈️'],
+  [/blizzard/i, '❄️'],
+  [/winter storm|snow|ice storm|sleet|freeze|frost/i, '❄️'],
+  [/flash flood/i, '🌊'],
+  [/flood/i, '🌊'],
+  [/heat/i, '🟠'],
+  [/cold|wind chill/i, '🥶'],
+  [/high wind|wind advisory/i, '💨'],
+  [/fog/i, '🌫️'],
+  [/fire|red flag/i, '🔥'],
+  [/dust/i, '🌪️'],
+  [/rip current|surf|coastal|marine|small craft|gale|storm warning/i, '⚓'],
+  [/air quality/i, '🫁'],
+  [/tsunami/i, '🌊']
+];
+function iconForEvent(eventName){
+  const e = eventName || '';
+  for(const [re, icon] of EVENT_ICON_RULES){ if(re.test(e)) return icon; }
+  return '⚠️';
+}
+
+function shortForecastEmoji(shortForecast, isDaytime){
+  const s = (shortForecast || '').toLowerCase();
+  if(s.includes('thunder')) return '⛈️';
+  if(s.includes('snow') || s.includes('flurr') || s.includes('blizzard')) return '❄️';
+  if(s.includes('sleet') || s.includes('ice')) return '🧊';
+  if(s.includes('rain') || s.includes('shower')) return '🌧️';
+  if(s.includes('fog') || s.includes('haze')) return '🌫️';
+  if(s.includes('wind')) return '💨';
+  if(s.includes('cloud') && (s.includes('partly') || s.includes('mostly'))) return isDaytime ? '⛅' : '☁️';
+  if(s.includes('cloud') || s.includes('overcast')) return '☁️';
+  if(s.includes('clear') || s.includes('sunny')) return isDaytime ? '☀️' : '🌙';
+  return isDaytime ? '🌤️' : '🌙';
+}
+
+/* ============ 4. NWS + GEOCODING API ============ */
+async function nwsFetch(url){
+  const res = await fetch(url, { headers: { 'Accept': 'application/geo+json' } });
+  if(!res.ok){
+    const err = new Error('NWS request failed: ' + res.status);
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+
+async function getPoints(lat, lon){
+  const latR = Math.round(lat * 10000) / 10000;
+  const lonR = Math.round(lon * 10000) / 10000;
+  const data = await nwsFetch(`${NWS_BASE}/points/${latR},${lonR}`);
+  return data.properties;
+}
+
+async function getActiveAlerts(lat, lon){
+  const data = await nwsFetch(`${NWS_BASE}/alerts/active?point=${lat},${lon}`);
+  return safeArray(data.features);
+}
+
+async function getForecastPeriods(forecastUrl){
+  const data = await nwsFetch(forecastUrl);
+  return safeArray(data.properties && data.properties.periods);
+}
+
+async function getNearestStationId(stationsUrl){
+  const data = await nwsFetch(stationsUrl);
+  const features = safeArray(data.features);
+  if(!features.length) return null;
+  return features[0].properties.stationIdentifier || (features[0].id || '').split('/').pop();
+}
+
+async function getLatestObservation(stationId){
+  const data = await nwsFetch(`${NWS_BASE}/stations/${stationId}/observations/latest`);
+  return data.properties;
+}
+
+function shortenDisplayName(item){
+  const a = item.address || {};
+  const place = a.city || a.town || a.village || a.hamlet || a.county || a.municipality;
+  const st = a.state;
+  if(place && st) return `${place}, ${st}`;
+  if(place) return place;
+  const segs = (item.display_name || '').split(',').map(s=>s.trim());
+  return segs.slice(0,2).join(', ') || (item.display_name || 'Unknown location');
+}
+
+async function geocodeSearch(query){
+  const url = `${NOMINATIM_BASE}?format=json&addressdetails=1&limit=6&countrycodes=us&q=${encodeURIComponent(query)}`;
+  const res = await fetch(url, { headers: { 'Accept':'application/json' } });
+  if(!res.ok) throw new Error('Search failed: ' + res.status);
+  const data = await res.json();
+  return safeArray(data).map(item => ({
+    label: shortenDisplayName(item),
+    lat: parseFloat(item.lat),
+    lon: parseFloat(item.lon),
+    raw: item
+  }));
+}
+
+function radarImageUrl(stationId){
+  if(!stationId) return null;
+  return `https://radar.weather.gov/ridge/standard/${stationId}_loop.gif?t=${Date.now()}`;
+}
+function radarPageUrl(stationId){
+  return `https://radar.weather.gov/station/${(stationId||'').toLowerCase()}/standard`;
+}
+
+/* ============ 5. WEATHER BACKGROUND ENGINE ============ */
+const canvasEl = document.getElementById('bg-canvas');
+const canvasCtx = canvasEl.getContext('2d');
+const skyA = document.getElementById('sky-a');
+const skyB = document.getElementById('sky-b');
+const bgOverlayEl = document.getElementById('bg-overlay');
+const cloudLayerEl = document.getElementById('cloud-layer');
+const starsLayerEl = document.getElementById('stars-layer');
+
+let skyShowingA = true;
+let currentTheme = null;
+let particleMode = 'none';
+let particles = [];
+let lightningTimer = null;
+
+const SKY_GRADIENTS = {
+  'clear-day':    'linear-gradient(180deg,#3E7CB1 0%,#7FB2DB 45%,#BFE0F0 100%)',
+  'clear-night':  'linear-gradient(180deg,#060912 0%,#0D1526 55%,#16223B 100%)',
+  'cloudy':       'linear-gradient(180deg,#4B5568 0%,#6B7690 60%,#8A93A8 100%)',
+  'rain':         'linear-gradient(180deg,#232B38 0%,#333F52 60%,#47546A 100%)',
+  'thunderstorm': 'linear-gradient(180deg,#12151C 0%,#1E2430 55%,#2A3242 100%)',
+  'snow':         'linear-gradient(180deg,#5B6B80 0%,#8492A6 55%,#C3CEDC 100%)',
+  'fog':          'linear-gradient(180deg,#6B7280 0%,#838B98 60%,#A8AFB9 100%)',
+  'tornado':      'linear-gradient(180deg,#1B2418 0%,#2E3B26 55%,#3E4A30 100%)'
+};
+
+function resizeCanvas(){
+  const dpr = window.devicePixelRatio || 1;
+  canvasEl.width = Math.floor(window.innerWidth * dpr);
+  canvasEl.height = Math.floor(window.innerHeight * dpr);
+  canvasEl.style.width = window.innerWidth + 'px';
+  canvasEl.style.height = window.innerHeight + 'px';
+  canvasCtx.setTransform(dpr,0,0,dpr,0,0);
+}
+window.addEventListener('resize', resizeCanvas);
+
+const cloudDriftStyle = document.createElement('style');
+cloudDriftStyle.textContent = '@keyframes cloud-drift{ from{ transform:translateX(-10vw);} to{ transform:translateX(110vw);} }';
+document.head.appendChild(cloudDriftStyle);
+
+function buildClouds(count){
+  cloudLayerEl.innerHTML = '';
+  for(let i=0;i<count;i++){
+    const el = document.createElement('div');
+    el.className = 'cloud';
+    const size = 90 + Math.random()*160;
+    el.style.width = size + 'px';
+    el.style.height = (size*0.5) + 'px';
+    el.style.top = (5 + Math.random()*40) + '%';
+    const duration = 42 + Math.random()*50;
+    el.style.animation = `cloud-drift ${duration}s linear infinite`;
+    el.style.animationDelay = (-Math.random()*duration) + 's';
+    cloudLayerEl.appendChild(el);
+  }
+}
+
+function buildStars(count){
+  starsLayerEl.innerHTML = '';
+  for(let i=0;i<count;i++){
+    const el = document.createElement('div');
+    el.className = 'star';
+    el.style.top = (Math.random()*70) + '%';
+    el.style.left = (Math.random()*100) + '%';
+    el.style.animationName = 'twinkle';
+    el.style.animationTimingFunction = 'ease-in-out';
+    el.style.animationIterationCount = 'infinite';
+    el.style.animationDuration = (2 + Math.random()*3) + 's';
+    el.style.animationDelay = (-Math.random()*4) + 's';
+    starsLayerEl.appendChild(el);
+  }
+}
+
+function setSkyTheme(themeKey){
+  const gradient = SKY_GRADIENTS[themeKey] || SKY_GRADIENTS['clear-night'];
+  const incoming = skyShowingA ? skyB : skyA;
+  const outgoing = skyShowingA ? skyA : skyB;
+  incoming.style.background = gradient;
+  incoming.style.opacity = '1';
+  outgoing.style.opacity = '0';
+  skyShowingA = !skyShowingA;
+}
+
+function seedParticles(mode){
+  const w = window.innerWidth, h = window.innerHeight;
+  particles = [];
+  if(mode === 'rain'){
+    for(let i=0;i<130;i++) particles.push({ x:Math.random()*w, y:Math.random()*h, len:10+Math.random()*14, speed:7+Math.random()*7 });
+  } else if(mode === 'snow'){
+    for(let i=0;i<80;i++) particles.push({ x:Math.random()*w, y:Math.random()*h, r:1.5+Math.random()*2.4, speed:0.5+Math.random()*1.1, phase:Math.random()*Math.PI*2 });
+  }
+}
+
+function setParticleMode(mode){
+  if(mode === particleMode) return;
+  particleMode = mode;
+  seedParticles(mode);
+}
+
+function tickParticles(){
+  const w = window.innerWidth, h = window.innerHeight;
+  canvasCtx.clearRect(0,0,w,h);
+  if(particleMode === 'rain'){
+    canvasCtx.strokeStyle = 'rgba(185,212,255,0.5)';
+    canvasCtx.lineWidth = 1.3;
+    for(const p of particles){
+      canvasCtx.beginPath();
+      canvasCtx.moveTo(p.x, p.y);
+      canvasCtx.lineTo(p.x - 3, p.y + p.len);
+      canvasCtx.stroke();
+      p.y += p.speed; p.x -= 0.25;
+      if(p.y > h){ p.y = -p.len; p.x = Math.random()*w; }
+      if(p.x < -10){ p.x = w + 10; }
+    }
+  } else if(particleMode === 'snow'){
+    canvasCtx.fillStyle = 'rgba(255,255,255,0.9)';
+    for(const p of particles){
+      p.phase += 0.015;
+      p.x += Math.sin(p.phase)*0.5;
+      p.y += p.speed;
+      canvasCtx.beginPath();
+      canvasCtx.arc(p.x, p.y, p.r, 0, Math.PI*2);
+      canvasCtx.fill();
+      if(p.y > h){ p.y = -4; p.x = Math.random()*w; }
+    }
+  }
+  requestAnimationFrame(tickParticles);
+}
+
+function startLightning(){
+  stopLightning();
+  const flashEl = document.getElementById('lightning-flash');
+  const scheduleNext = () => {
+    const delay = 2200 + Math.random()*5500;
+    lightningTimer = setTimeout(()=>{
+      flashEl.classList.add('flash-active');
+      setTimeout(()=> flashEl.classList.remove('flash-active'), 130);
+      if(Math.random() < 0.3){
+        setTimeout(()=>{
+          flashEl.classList.add('flash-active');
+          setTimeout(()=> flashEl.classList.remove('flash-active'), 100);
+        }, 200);
+      }
+      scheduleNext();
+    }, delay);
+  };
+  scheduleNext();
+}
+function stopLightning(){
+  if(lightningTimer) clearTimeout(lightningTimer);
+  lightningTimer = null;
+  const flashEl = document.getElementById('lightning-flash');
+  if(flashEl) flashEl.classList.remove('flash-active');
+}
+
+function applyWeatherTheme(themeKey){
+  if(themeKey === currentTheme) return;
+  currentTheme = themeKey;
+  setSkyTheme(themeKey);
+  bgOverlayEl.setAttribute('data-theme', themeKey);
+
+  if(themeKey === 'rain' || themeKey === 'thunderstorm') setParticleMode('rain');
+  else if(themeKey === 'snow') setParticleMode('snow');
+  else setParticleMode('none');
+
+  if(themeKey === 'thunderstorm' || themeKey === 'tornado') startLightning();
+  else stopLightning();
+}
+
+function determineWeatherTheme(){
+  const alerts = Array.from(state.activeAlerts.values());
+  if(alerts.some(a => isTornadoWarning(a.event))) return 'tornado';
+  if(alerts.some(a => /thunderstorm/i.test(a.event))) return 'thunderstorm';
+  if(alerts.some(a => /winter storm|blizzard|ice storm/i.test(a.event))) return 'snow';
+  if(alerts.some(a => /dense fog/i.test(a.event))) return 'fog';
+
+  const desc = ((state.currentConditions && state.currentConditions.textDescription) || '').toLowerCase();
+  if(desc){
+    if(desc.includes('thunder')) return 'thunderstorm';
+    if(desc.includes('snow') || desc.includes('sleet') || desc.includes('ice')) return 'snow';
+    if(desc.includes('fog') || desc.includes('haze') || desc.includes('mist')) return 'fog';
+    if(desc.includes('rain') || desc.includes('shower') || desc.includes('drizzle')) return 'rain';
+    if(desc.includes('cloud') || desc.includes('overcast')) return 'cloudy';
+    if(desc.includes('clear') || desc.includes('fair') || desc.includes('sunny')) return state.isDaytime ? 'clear-day' : 'clear-night';
+  }
+  return state.isDaytime ? 'clear-day' : 'clear-night';
+}
+
+function refreshWeatherTheme(){
+  applyWeatherTheme(determineWeatherTheme());
+}
+
+const ONBOARD_THEME_CYCLE = ['clear-day','rain','thunderstorm','snow','fog','tornado','clear-night'];
+let onboardCycleIndex = 0;
+let onboardCycleTimer = null;
+function startOnboardingCycle(){
+  stopOnboardingCycle();
+  applyWeatherTheme(ONBOARD_THEME_CYCLE[onboardCycleIndex]);
+  onboardCycleTimer = setInterval(()=>{
+    onboardCycleIndex = (onboardCycleIndex + 1) % ONBOARD_THEME_CYCLE.length;
+    applyWeatherTheme(ONBOARD_THEME_CYCLE[onboardCycleIndex]);
+  }, 3400);
+}
+function stopOnboardingCycle(){ if(onboardCycleTimer) clearInterval(onboardCycleTimer); onboardCycleTimer = null; }
+
+/* ============ 6. RENDERING ============ */
+const SEVERITY_ORDER = { warning:0, watch:1, special:2, advisory:3, statement:4, info:5 };
+function sortAlertsBySeverity(a,b){
+  const sa = SEVERITY_ORDER[classifySeverity(a.event)] ?? 9;
+  const sb = SEVERITY_ORDER[classifySeverity(b.event)] ?? 9;
+  if(sa !== sb) return sa - sb;
+  return new Date(b.sent||0) - new Date(a.sent||0);
+}
+
+function alertCardHtml(alert, opts){
+  opts = opts || {};
+  const sev = classifySeverity(alert.event);
+  const icon = iconForEvent(alert.event);
+  const isTW = isTornadoWarning(alert.event);
+  let cls = 'alert-card';
+  if(isTW) cls += ' is-tornado-warning';
+  if(opts.isRecent) cls += ' is-recent';
+  // NWS alerts carry two different timestamps that are easy to mix up:
+  //   - `ends`    = when the actual hazard/event is expected to end — this is
+  //                 the time referenced in the alert's own text (e.g. "...in
+  //                 effect until 10 PM CDT...").
+  //   - `expires` = when this *message* stops being valid, which NWS often
+  //                 sets much sooner so the segment gets refreshed/renewed by
+  //                 a follow-up statement. It frequently does NOT match the
+  //                 event end time quoted in the text.
+  // Show `ends` when NWS provides it so this matches the statement; only
+  // fall back to `expires` when `ends` isn't present.
+  const endTime = alert.ends || alert.expires;
+  const endLabel = alert.ends ? 'Ends' : (alert.expires ? 'Expires' : null);
+  const timeLabel = opts.isRecent
+    ? `Expired ${relativeTimeFromNow(alert.expiredAt)}`
+    : (endLabel ? `${endLabel} ${formatClockTime(endTime)}` : '');
+  return `
+    <button class="${cls}" data-severity="${sev}" data-alert-id="${escapeHtml(alert.id)}" data-recent="${opts.isRecent ? '1':'0'}">
+      <span class="alert-icon">${icon}</span>
+      <span class="alert-card-body">
+        <span class="alert-card-top">
+          <span class="alert-event">${escapeHtml(alert.event)}</span>
+          <span class="severity-chip" data-severity="${sev}">${sev}</span>
+        </span>
+        <span class="alert-area">${escapeHtml(alert.areaDesc || '')}</span>
+        <span class="alert-meta-row">
+          <span>Issued ${formatClockTime(alert.effective || alert.sent)}</span>
+          ${timeLabel ? `<span>${escapeHtml(timeLabel)}</span>` : ''}
+        </span>
+      </span>
+    </button>`;
+}
+
+function wireAlertCardClicks(container){
+  $all('.alert-card', container).forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const id = btn.getAttribute('data-alert-id');
+      const isRecent = btn.getAttribute('data-recent') === '1';
+      const alert = isRecent ? state.recentAlerts.find(a=>a.id===id) : state.activeAlerts.get(id);
+      if(alert) openAlertDetail(alert);
+    });
+  });
+}
+
+function renderCurrentAlerts(){
+  const list = document.getElementById('current-alerts-list');
+  const empty = document.getElementById('no-alerts-empty');
+  const alerts = Array.from(state.activeAlerts.values()).sort(sortAlertsBySeverity);
+  if(alerts.length === 0){
+    list.innerHTML = '';
+    empty.hidden = false;
+  } else {
+    empty.hidden = true;
+    list.innerHTML = alerts.map(a => alertCardHtml(a, {isRecent:false})).join('');
+  }
+  wireAlertCardClicks(list);
+}
+
+function renderRecentAlerts(){
+  const section = document.getElementById('recent-section');
+  const list = document.getElementById('recent-alerts-list');
+  const now = Date.now();
+  state.recentAlerts = state.recentAlerts.filter(a => (now - new Date(a.expiredAt).getTime()) < RECENT_ALERT_WINDOW_MS);
+  if(state.recentAlerts.length === 0){ section.hidden = true; list.innerHTML=''; return; }
+  section.hidden = false;
+  const sorted = [...state.recentAlerts].sort((a,b)=> new Date(b.expiredAt) - new Date(a.expiredAt));
+  list.innerHTML = sorted.map(a => alertCardHtml(a, {isRecent:true})).join('');
+  wireAlertCardClicks(list);
+}
+
+function renderConditionsCard(){
+  const card = document.getElementById('conditions-card');
+  const c = state.currentConditions;
+  if(!c || c.temperatureF == null){ card.hidden = true; return; }
+  card.hidden = false;
+  document.getElementById('cond-temp').textContent = c.temperatureF + '°';
+  document.getElementById('cond-desc').textContent = c.textDescription || '—';
+  const bits = [];
+  if(c.windMph != null) bits.push(`Wind ${c.windMph} mph`);
+  if(c.humidity != null) bits.push(`Humidity ${c.humidity}%`);
+  document.getElementById('cond-sub').textContent = bits.join(' · ') || ' ';
+}
+
+function renderForecastStrip(){
+  const section = document.getElementById('forecast-section');
+  const strip = document.getElementById('forecast-strip');
+  const periods = state.forecastPeriods.slice(0, 8);
+  if(!periods.length){ section.hidden = true; return; }
+  section.hidden = false;
+  strip.innerHTML = periods.map(p => `
+    <div class="forecast-card">
+      <div class="forecast-period">${escapeHtml(p.name)}</div>
+      <div class="forecast-emoji">${shortForecastEmoji(p.shortForecast, p.isDaytime)}</div>
+      <div class="forecast-temp">${p.temperature}°${p.temperatureUnit || 'F'}</div>
+    </div>`).join('');
+}
+
+function renderRadar(){
+  const section = document.getElementById('radar-section');
+  const img = document.getElementById('radar-image');
+  const fallback = document.getElementById('radar-fallback-link');
+  const station = state.points && state.points.radarStation;
+  if(!station){ section.hidden = true; return; }
+  section.hidden = false;
+  fallback.hidden = true;
+  img.hidden = false;
+  img.onerror = () => { img.hidden = true; fallback.hidden = false; fallback.href = radarPageUrl(station); };
+  img.src = radarImageUrl(station);
+}
+
+function updateLastUpdatedLabel(){
+  const el = document.getElementById('last-updated-label');
+  if(!state.lastUpdated){ el.textContent = ''; return; }
+  el.textContent = 'Updated ' + relativeTimeFromNow(state.lastUpdated);
+}
+
+function updateHomeLocationLabel(){
+  if(state.location) document.getElementById('home-location-name').textContent = state.location.label;
+}
+
+function openAlertDetail(alert){
+  const sev = classifySeverity(alert.event);
+  const badge = document.getElementById('modal-badge');
+  badge.textContent = sev;
+  badge.setAttribute('data-severity', sev);
+  const body = document.getElementById('modal-body');
+  const endTime = alert.ends || alert.expires;
+  const endLabel = alert.ends ? 'Ends' : 'Expires';
+  body.innerHTML = `
+    <h3 class="modal-event-title">${iconForEvent(alert.event)} ${escapeHtml(alert.event)}</h3>
+    <div class="modal-row"><div class="modal-row-label">Areas affected</div><div class="modal-row-value">${escapeHtml(alert.areaDesc || '—')}</div></div>
+    <div class="modal-divider"></div>
+    <div class="modal-times">
+      <div class="modal-row"><div class="modal-row-label">Issued</div><div class="modal-row-value">${escapeHtml(formatFullDateTime(alert.effective || alert.sent))}</div></div>
+      <div class="modal-row"><div class="modal-row-label">${endLabel}</div><div class="modal-row-value">${escapeHtml(formatFullDateTime(endTime))}</div></div>
+    </div>
+    <div class="modal-divider"></div>
+    ${alert.headline ? `<div class="modal-row"><div class="modal-row-label">Headline</div><div class="modal-row-value">${escapeHtml(alert.headline)}</div></div>` : ''}
+    ${alert.description ? `<div class="modal-row"><div class="modal-row-label">Details</div><div class="modal-row-value">${escapeHtml(alert.description)}</div></div>` : ''}
+    ${alert.instruction ? `<div class="modal-row"><div class="modal-row-label">Instructions</div><div class="modal-row-value">${escapeHtml(alert.instruction)}</div></div>` : ''}
+    ${alert.senderName ? `<div class="modal-row"><div class="modal-row-label">Issued by</div><div class="modal-row-value">${escapeHtml(alert.senderName)}</div></div>` : ''}
+  `;
+  openModal('alert-modal-backdrop');
+}
+
+function openModal(id){ document.getElementById(id).classList.add('is-open'); }
+function closeModal(id){ document.getElementById(id).classList.remove('is-open'); }
+
+function syncSettingsUI(){
+  document.getElementById('settings-current-location').textContent = state.location ? state.location.label : 'Not set';
+  renderSavedLocationsList();
+  refreshNotificationPermissionRow();
+
+  $all('#theme-segmented button').forEach(b => b.classList.toggle('is-active', b.dataset.value === state.settings.theme));
+  $all('#textsize-segmented button').forEach(b => b.classList.toggle('is-active', b.dataset.value === state.settings.textSize));
+
+  document.getElementById('timing-60').checked = state.settings.alertTimingMs === 60000;
+  document.getElementById('timing-30').checked = state.settings.alertTimingMs === 30000;
+
+  document.getElementById('toggle-sound').checked = !!state.settings.soundEnabled;
+  document.getElementById('toggle-cat-warning').checked = !!state.settings.categoryToggles.warning;
+  document.getElementById('toggle-cat-watch').checked = !!state.settings.categoryToggles.watch;
+  document.getElementById('toggle-cat-advisory').checked = !!state.settings.categoryToggles.advisory;
+  document.getElementById('toggle-cat-statement').checked = !!state.settings.categoryToggles.statement;
+  document.getElementById('toggle-cat-special').checked = !!state.settings.categoryToggles.special;
+  document.getElementById('toggle-cat-info').checked = !!state.settings.categoryToggles.info;
+  document.getElementById('toggle-colorblind').checked = !!state.settings.colorblind;
+}
+
+function renderSavedLocationsList(){
+  const wrap = document.getElementById('saved-locations-list');
+  if(!state.savedLocations.length){ wrap.innerHTML = ''; return; }
+  wrap.innerHTML = state.savedLocations.map((loc,i) => {
+    const isCurrent = state.location && loc.lat === state.location.lat && loc.lon === state.location.lon;
+    return `
+    <div class="location-chip-row ${isCurrent ? 'is-current':''}">
+      <span class="location-chip-name">${escapeHtml(loc.label)}</span>
+      <span style="display:flex; align-items:center; gap:10px;">
+        ${!isCurrent ? `<button class="location-chip-tag" data-switch-index="${i}" style="background:none;border:none;cursor:pointer;">USE</button>` : '<span class="location-chip-tag">CURRENT</span>'}
+        <button class="location-remove" data-remove-index="${i}" aria-label="Remove">✕</button>
+      </span>
+    </div>`;
+  }).join('');
+  $all('[data-switch-index]', wrap).forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const idx = parseInt(btn.getAttribute('data-switch-index'),10);
+      const loc = state.savedLocations[idx];
+      if(loc) switchToLocation(loc);
+    });
+  });
+  $all('[data-remove-index]', wrap).forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const idx = parseInt(btn.getAttribute('data-remove-index'),10);
+      state.savedLocations.splice(idx,1);
+      saveUserConfig();
+      renderSavedLocationsList();
+    });
+  });
+}
+
+/* ============ 7. NAVIGATION & EVENT WIRING ============ */
+function goToScreen(name){
+  state.screen = name;
+  $all('.screen').forEach(s => s.classList.remove('is-active'));
+  document.getElementById('screen-' + name).classList.add('is-active');
+}
+
+function initOnboardingScreen(){
+  const btn = document.getElementById('btn-onboard-continue');
+  let advanced = false;
+  const advance = () => {
+    if(advanced) return;
+    // Guard: if a saved location already skipped straight past onboarding
+    // (see init()), state.screen will no longer be 'onboarding' by the time
+    // this fires. Without this check, the auto-advance timer below would
+    // still fire ~3.2s later and yank the user back to the location screen
+    // even though their alerts had already loaded — the "have to press Get
+    // Location again after every refresh" bug.
+    if(state.screen !== 'onboarding') return;
+    advanced = true;
+    if(state.onboardingTimer) clearTimeout(state.onboardingTimer);
+    stopOnboardingCycle();
+    unlockAudioContext();
+    goToScreen('location');
+  };
+  btn.addEventListener('click', advance);
+  state.onboardingTimer = setTimeout(advance, 3200);
+}
+
+function initLocationScreen(){
+  document.getElementById('btn-location-back').addEventListener('click', ()=> goToScreen('home'));
+  document.getElementById('btn-locate-me').addEventListener('click', handleLocateMe);
+
+  const input = document.getElementById('location-search');
+  const resultsBox = document.getElementById('search-results');
+  const runSearch = debounce(async ()=>{
+    const q = input.value.trim();
+    if(q.length < 2){ resultsBox.hidden = true; resultsBox.innerHTML=''; return; }
+    resultsBox.hidden = false;
+    resultsBox.innerHTML = '<div class="search-loading">Searching…</div>';
+    const token = ++state.searchAbortToken;
+    try{
+      const results = await geocodeSearch(q);
+      if(token !== state.searchAbortToken) return;
+      if(!results.length){ resultsBox.innerHTML = '<div class="search-empty">No matches. Try a city, ZIP, or county.</div>'; return; }
+      resultsBox.innerHTML = results.map((r,i) => `
+        <div class="search-result-item" data-result-index="${i}">
+          <span>${escapeHtml(r.label)}</span>
+          <span class="search-result-sub">${escapeHtml((r.raw.display_name || '').slice(0,90))}</span>
+        </div>`).join('');
+      $all('[data-result-index]', resultsBox).forEach(el=>{
+        el.addEventListener('click', ()=>{
+          const idx = parseInt(el.getAttribute('data-result-index'),10);
+          const r = results[idx];
+          unlockAudioContext();
+          selectLocation({ label:r.label, lat:r.lat, lon:r.lon });
+        });
+      });
+    }catch(e){
+      if(token !== state.searchAbortToken) return;
+      resultsBox.innerHTML = '<div class="search-empty">Search is unavailable right now. Check your connection and try again.</div>';
+    }
+  }, 450);
+  input.addEventListener('input', runSearch);
+}
+
+function handleLocateMe(){
+  const errEl = document.getElementById('location-error');
+  errEl.hidden = true;
+  // Must run synchronously off the click — iOS Safari ties the geolocation
+  // (and notification) prompts to the user gesture that triggered them.
+  unlockAudioContext();
+  if(!navigator.geolocation){
+    errEl.textContent = "This browser doesn't support location detection — try searching instead.";
+    errEl.hidden = false;
+    return;
+  }
+  if(window.isSecureContext === false){
+    errEl.textContent = 'Location requires a secure (https://) connection. Try searching instead.';
+    errEl.hidden = false;
+    return;
+  }
+
+  const btn = document.getElementById('btn-locate-me');
+  const originalText = btn.textContent;
+  btn.textContent = 'Locating…';
+  btn.disabled = true;
+
+  const finish = () => { btn.textContent = originalText; btn.disabled = false; };
+  const onSuccess = (pos) => {
+    finish();
+    selectLocation({ label:null, lat:pos.coords.latitude, lon:pos.coords.longitude });
+  };
+  const describeError = (err) => {
+    if(err.code === 1){ // PERMISSION_DENIED
+      return isIOSDevice()
+        ? 'Location access is off for this app. Turn it on in iOS Settings → Privacy & Security → Location Services → AlertMyTown, then try again.'
+        : 'Location access was denied. Check your browser\'s site settings and try again.';
+    }
+    if(err.code === 2) return 'Your device couldn\'t get a location fix. Move somewhere with a clearer GPS/network signal and try again.';
+    if(err.code === 3) return 'Location request timed out. Try again, or search for your city/ZIP instead.';
+    return 'Could not get your location (' + (err.message || 'unknown error') + '). Try searching instead.';
+  };
+
+  // First attempt: high accuracy (GPS). iOS in particular can be slow to get
+  // a GPS lock indoors, so if this one times out we retry once with coarser,
+  // network-based accuracy rather than just giving up.
+  navigator.geolocation.getCurrentPosition(
+    onSuccess,
+    (err)=>{
+      if(err.code === 3){
+        navigator.geolocation.getCurrentPosition(
+          onSuccess,
+          (err2)=>{ finish(); errEl.textContent = describeError(err2); errEl.hidden = false; },
+          { enableHighAccuracy:false, timeout:20000, maximumAge:120000 }
+        );
+        return;
+      }
+      finish();
+      errEl.textContent = describeError(err);
+      errEl.hidden = false;
+    },
+    { enableHighAccuracy:true, timeout:10000, maximumAge:60000 }
+  );
+}
+
+function initLoadingScreen(){
+  document.getElementById('btn-loading-retry').addEventListener('click', ()=>{
+    if(state.location) selectLocation(state.location);
+  });
+  document.getElementById('btn-loading-back').addEventListener('click', ()=>{
+    document.getElementById('loading-error-box').hidden = true;
+    document.getElementById('btn-location-back').hidden = !state.points;
+    goToScreen('location');
+  });
+}
+
+function initHomeScreen(){
+  document.getElementById('btn-change-location').addEventListener('click', ()=>{
+    document.getElementById('btn-location-back').hidden = false;
+    goToScreen('location');
+  });
+  document.getElementById('btn-open-settings').addEventListener('click', openSettingsPanel);
+  initPullToRefresh();
+  document.getElementById('btn-toggle-recent').addEventListener('click', ()=>{
+    document.getElementById('recent-alerts-list').classList.toggle('is-collapsed');
+    document.getElementById('recent-chevron').classList.toggle('is-open');
+  });
+}
+
+function openSettingsPanel(){
+  syncSettingsUI();
+  openModal('settings-backdrop');
+}
+
+function initModals(){
+  document.getElementById('btn-close-modal').addEventListener('click', ()=> closeModal('alert-modal-backdrop'));
+  document.getElementById('btn-close-settings').addEventListener('click', ()=> closeModal('settings-backdrop'));
+  ['alert-modal-backdrop','settings-backdrop'].forEach(id=>{
+    const el = document.getElementById(id);
+    el.addEventListener('click', (e)=>{ if(e.target === el) closeModal(id); });
+  });
+}
+
+function applyThemeMode(){
+  const mode = state.settings.theme;
+  let resolved = mode;
+  if(mode === 'auto'){
+    const hour = new Date().getHours();
+    resolved = (hour >= 7 && hour < 19) ? 'light' : 'dark';
+  }
+  document.documentElement.setAttribute('data-mode', resolved);
+}
+
+function setAlertTiming(ms){
+  state.settings.alertTimingMs = ms;
+  saveUserConfig();
+  restartAlertPolling();
+  showToast(ms === 30000 ? 'Updating every 30 seconds' : 'Updating every 1 minute');
+}
+
+function showToast(msg){
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('is-shown');
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(()=> el.classList.remove('is-shown'), 2200);
+}
+
+function initSettingsControls(){
+  $all('#theme-segmented button').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      state.settings.theme = btn.dataset.value;
+      applyThemeMode();
+      syncSettingsUI();
+      saveUserConfig();
+    });
+  });
+  $all('#textsize-segmented button').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      state.settings.textSize = btn.dataset.value;
+      document.documentElement.setAttribute('data-textsize', btn.dataset.value);
+      syncSettingsUI();
+      saveUserConfig();
+    });
+  });
+
+  document.getElementById('timing-60').addEventListener('change', (e)=>{ if(e.target.checked) setAlertTiming(60000); });
+  document.getElementById('timing-30').addEventListener('change', (e)=>{ if(e.target.checked) setAlertTiming(30000); });
+
+  const catMap = {
+    'toggle-cat-warning':'warning','toggle-cat-watch':'watch','toggle-cat-advisory':'advisory',
+    'toggle-cat-statement':'statement','toggle-cat-special':'special','toggle-cat-info':'info'
+  };
+  Object.keys(catMap).forEach(id=>{
+    document.getElementById(id).addEventListener('change', (e)=>{
+      state.settings.categoryToggles[catMap[id]] = e.target.checked;
+      saveUserConfig();
+    });
+  });
+
+  document.getElementById('toggle-sound').addEventListener('change', (e)=>{
+    state.settings.soundEnabled = e.target.checked;
+    saveUserConfig();
+    if(e.target.checked){ unlockAudioContext(); playTonePattern(TONE_STANDARD); }
+  });
+
+  document.getElementById('toggle-colorblind').addEventListener('change', (e)=>{
+    state.settings.colorblind = e.target.checked;
+    document.body.classList.toggle('colorblind-mode', e.target.checked);
+    saveUserConfig();
+  });
+
+  document.getElementById('btn-settings-change-location').addEventListener('click', ()=>{
+    closeModal('settings-backdrop');
+    document.getElementById('btn-location-back').hidden = false;
+    goToScreen('location');
+  });
+
+  document.getElementById('btn-save-current-location').addEventListener('click', ()=>{
+    if(!state.location) return;
+    const exists = state.savedLocations.some(l => l.lat===state.location.lat && l.lon===state.location.lon);
+    if(!exists){
+      state.savedLocations.push({ label: state.location.label, lat: state.location.lat, lon: state.location.lon });
+      saveUserConfig();
+      renderSavedLocationsList();
+      showToast('Location saved');
+    } else {
+      showToast('Already saved');
+    }
+  });
+
+  initNotificationSettingsRow();
+  initTestNotificationsRow();
+}
+
+/* --- Notification permission row ---
+   iOS Safari has two hard rules this has to respect:
+   1. The Notification API does not exist at all in a plain Safari tab — it
+      only becomes available once the page has been added to the Home Screen
+      and is running standalone. Asking before that is pointless, so we
+      detect it and tell the user what to do instead.
+   2. Notification.requestPermission() must be called synchronously inside a
+      real tap/click handler. Calling it after any `await` (like the old
+      code did, deep inside selectLocation()) causes iOS to silently ignore
+      it — no prompt ever appears, and permission stays stuck on "default". */
+function isIOSDevice(){
+  return /iP(hone|ad|od)/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+function isStandaloneDisplay(){
+  return window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+}
+
+function refreshNotificationPermissionRow(){
+  const descEl = document.getElementById('notif-permission-desc');
+  const btn = document.getElementById('btn-enable-notifications');
+  if(!descEl || !btn) return;
+
+  const supported = ('Notification' in window);
+  if(!supported){
+    if(isIOSDevice() && !isStandaloneDisplay()){
+      descEl.textContent = 'Add AlertMyTown to your Home Screen first — Safari tabs on iOS can\'t show notifications, only installed apps can.';
+    } else {
+      descEl.textContent = 'Notifications aren\'t supported in this browser.';
+    }
+    btn.textContent = 'Unavailable';
+    btn.disabled = true;
+    return;
+  }
+  const perm = Notification.permission;
+  if(perm === 'granted'){
+    descEl.textContent = 'Notifications are on for this device. New alerts will show up here whenever the app is open in the background.';
+    btn.textContent = 'Send test';
+    btn.disabled = false;
+  } else if(perm === 'denied'){
+    descEl.textContent = isIOSDevice()
+      ? 'Notifications are blocked. Turn them on in iOS Settings → AlertMyTown → Notifications, then reopen the app.'
+      : 'Notifications are blocked in your browser settings for this site. Re-enable them there, then reload.';
+    btn.textContent = 'Blocked';
+    btn.disabled = true;
+  } else {
+    descEl.textContent = 'Get notified when a new alert is issued for your area.';
+    btn.textContent = 'Enable';
+    btn.disabled = false;
+  }
+}
+
+function initNotificationSettingsRow(){
+  const btn = document.getElementById('btn-enable-notifications');
+
+  btn.addEventListener('click', ()=>{
+    // Runs synchronously inside the click handler on purpose — see note above.
+    if(!('Notification' in window)) { refreshNotificationPermissionRow(); return; }
+    if(Notification.permission === 'granted'){
+      fireSystemNotification('AlertMyTown', 'Notifications are working — you\'ll see alerts like this.', false);
+      playTonePattern(TONE_STANDARD);
+      return;
+    }
+    if(Notification.permission === 'denied'){ refreshNotificationPermissionRow(); return; }
+    Notification.requestPermission().then((result)=>{
+      state.notificationPermissionAsked = true;
+      refreshNotificationPermissionRow();
+      if(result === 'granted'){
+        fireSystemNotification('AlertMyTown', 'Notifications are enabled for this device.', false);
+      }
+    }).catch(()=>{ refreshNotificationPermissionRow(); });
+  });
+
+  refreshNotificationPermissionRow();
+}
+
+// Fixed test payloads, one per severity bucket. Event names are chosen so
+// classifySeverity() naturally buckets them the same way a real NWS alert
+// would — nothing here is hardcoded to a severity, it's derived exactly
+// like production alerts are.
+const TEST_ALERT_DEFS = {
+  tornado:   { event: 'Tornado Warning' },
+  warning:   { event: 'Severe Thunderstorm Warning' },
+  watch:     { event: 'Severe Thunderstorm Watch' },
+  advisory:  { event: 'Winter Weather Advisory' },
+  statement: { event: 'Winter Storm Statement' },
+  special:   { event: 'Special Weather Statement' },
+  info:      { event: 'Hazardous Weather Outlook' }
+};
+
+function testNotification(type){
+  const def = TEST_ALERT_DEFS[type];
+  if(!def) return;
+  unlockAudioContext();
+  const sev = classifySeverity(def.event);
+  const isTW = isTornadoWarning(def.event);
+  const now = new Date();
+  const fakeAlert = {
+    id: 'test-' + type + '-' + now.getTime(),
+    event: def.event,
+    headline: `TEST — ${def.event} (no real alert has been issued)`,
+    areaDesc: 'Test County, ST — this is a test, not a real location',
+    effective: now.toISOString(),
+    expires: new Date(now.getTime() + 30 * 60000).toISOString(),
+    description: 'This is a TEST notification triggered from AlertMyTown settings so you can preview what this alert type looks, sounds, and reads like. No real weather alert has been issued for your location.',
+    instruction: '',
+    senderName: 'AlertMyTown (Test Mode)'
+  };
+  const title = `🧪 TEST: ${def.event}`;
+  const sub = 'This is only a test — tap to preview the alert screen.';
+  enqueueBanner({ alert: fakeAlert, title, sub, severity: sev, isTornado: isTW });
+  playTonePattern(toneForSeverity(sev, isTW), isTW);
+  fireSystemNotification(title, sub, isTW);
+  showToast('Test sent: ' + def.event);
+}
+
+function initTestNotificationsRow(){
+  const toggleBtn = document.getElementById('btn-toggle-test-panel');
+  const panel = document.getElementById('test-notif-panel');
+  toggleBtn.addEventListener('click', ()=>{
+    panel.hidden = !panel.hidden;
+    toggleBtn.textContent = panel.hidden ? 'Try it' : 'Hide';
+  });
+  $all('.test-notif-btn', panel).forEach(btn=>{
+    btn.addEventListener('click', ()=> testNotification(btn.getAttribute('data-test-type')));
+  });
+}
+
+function initPullToRefresh(){
+  const scrollEl = document.getElementById('home-scroll');
+  const indicator = document.getElementById('pull-indicator');
+  let startY = null, pulling = false;
+
+  scrollEl.addEventListener('touchstart', (e)=>{
+    if(scrollEl.scrollTop <= 0){ startY = e.touches[0].clientY; pulling = true; }
+    else { startY = null; pulling = false; }
+  }, { passive:true });
+
+  scrollEl.addEventListener('touchmove', (e)=>{
+    if(!pulling || startY == null) return;
+    const dy = e.touches[0].clientY - startY;
+    if(dy > 12){
+      indicator.classList.add('is-visible');
+      indicator.textContent = dy > 70 ? '↑ Release to refresh' : '↓ Pull to refresh';
+    }
+  }, { passive:true });
+
+  scrollEl.addEventListener('touchend', (e)=>{
+    if(!pulling || startY == null){ pulling = false; return; }
+    const dy = e.changedTouches[0].clientY - startY;
+    indicator.classList.remove('is-visible');
+    if(dy > 70) manualRefresh();
+    startY = null; pulling = false;
+  });
+}
+
+/* ============ 8. POLLING & BANNERS ============ */
+async function selectLocation(loc){
+  state.location = { label: loc.label, lat: loc.lat, lon: loc.lon };
+  document.getElementById('btn-location-back').hidden = true;
+  document.getElementById('location-search').value = '';
+  document.getElementById('search-results').hidden = true;
+  goToScreen('loading');
+  document.getElementById('loading-error-box').hidden = true;
+  document.getElementById('loading-title').textContent = 'Loading your current alerts…';
+  document.getElementById('loading-sub').textContent = 'Connecting to the National Weather Service…';
+
+  stopAllPolling();
+  state.activeAlerts = new Map();
+  state.recentAlerts = [];
+  state.currentConditions = null;
+  state.forecastPeriods = [];
+  state.points = null;
+
+  try{
+    const points = await getPoints(loc.lat, loc.lon);
+    state.points = points;
+    if(!loc.label){
+      const rl = points.relativeLocation && points.relativeLocation.properties;
+      state.location.label = (rl && rl.city && rl.state) ? `${rl.city}, ${rl.state}` : 'Your Location';
+    }
+    updateHomeLocationLabel();
+
+    await Promise.all([
+      refreshAlertsFromNetwork({ silent:true }),
+      refreshConditionsFromNetwork()
+    ]);
+
+    saveUserConfig();
+    goToScreen('home');
+    renderRadar();
+    startAlertPolling();
+    startConditionsPolling();
+    startClockTicker();
+    maybeRequestNotificationPermission();
+  }catch(e){
+    console.warn('AlertMyTown load error', e);
+    showLoadingError(e);
+  }
+}
+
+function switchToLocation(loc){
+  closeModal('settings-backdrop');
+  selectLocation(loc);
+}
+
+function showLoadingError(e){
+  const box = document.getElementById('loading-error-box');
+  const text = document.getElementById('loading-error-text');
+  if(e && e.status === 404){
+    text.textContent = 'This location appears to be outside National Weather Service coverage (US only). Try a different location.';
+  } else {
+    text.textContent = "Couldn't reach the National Weather Service. Check your connection and try again.";
+  }
+  box.hidden = false;
+}
+
+async function refreshAlertsFromNetwork(opts){
+  opts = opts || {};
+  if(!state.location) return;
+  const features = await getActiveAlerts(state.location.lat, state.location.lon);
+  const incoming = new Map();
+  for(const f of features){
+    const p = f.properties || {};
+    incoming.set(p.id, {
+      id: p.id, event: p.event, headline: p.headline, areaDesc: p.areaDesc,
+      severity: p.severity, certainty: p.certainty, urgency: p.urgency,
+      effective: p.effective, onset: p.onset, expires: p.expires, ends: p.ends, sent: p.sent,
+      description: p.description, instruction: p.instruction, senderName: p.senderName,
+      references: safeArray(p.references).map(r => r.identifier || r['@id'] || r.id).filter(Boolean)
+    });
+  }
+
+  const previousIds = new Set(state.activeAlerts.keys());
+  const referencedOldIds = new Set();
+  const changes = [];
+
+  for(const [id, alert] of incoming){
+    if(previousIds.has(id)) continue;
+    const referencesPrevious = alert.references.some(refId => previousIds.has(refId));
+    if(referencesPrevious){
+      alert.references.forEach(refId => { if(previousIds.has(refId)) referencedOldIds.add(refId); });
+      changes.push({ alert, kind:'update' });
+    } else {
+      changes.push({ alert, kind:'new' });
+    }
+  }
+
+  for(const id of previousIds){
+    if(!incoming.has(id) && !referencedOldIds.has(id)){
+      const expired = state.activeAlerts.get(id);
+      state.recentAlerts.unshift({ ...expired, expiredAt: new Date().toISOString() });
+    }
+  }
+
+  state.activeAlerts = incoming;
+  state.lastUpdated = new Date().toISOString();
+
+  renderCurrentAlerts();
+  renderRecentAlerts();
+  updateLastUpdatedLabel();
+  refreshWeatherTheme();
+
+  if(!opts.silent){
+    changes.forEach(c => handleNewOrUpdatedAlert(c.alert, c.kind));
+  }
+}
+
+function handleNewOrUpdatedAlert(alert, kind){
+  const sev = classifySeverity(alert.event);
+  const isTW = isTornadoWarning(alert.event);
+  const categoryOn = state.settings.categoryToggles[sev];
+  if(!isTW && categoryOn === false) return;
+
+  const title = kind === 'update' ? `📝 ${alert.event} Updated` : `${iconForEvent(alert.event)} ${alert.event} Issued for Your Location`;
+  const sub = isTW ? 'Tap immediately for life-saving information.' : 'Tap to view details.';
+
+  enqueueBanner({ alert, title, sub, severity:sev, isTornado:isTW });
+
+  playTonePattern(toneForSeverity(sev, isTW), isTW);
+
+  fireSystemNotification(title, sub, isTW);
+}
+
+function enqueueBanner(item){
+  state.bannerQueue.push(item);
+  if(!state.bannerShowing) showNextBanner();
+}
+
+function showNextBanner(){
+  if(state.bannerQueue.length === 0){ state.bannerShowing = false; return; }
+  state.bannerShowing = true;
+  const item = state.bannerQueue.shift();
+  const container = document.getElementById('banner-container');
+  const el = document.createElement('div');
+  el.className = 'alert-banner';
+  el.setAttribute('data-severity', item.severity);
+  if(item.isTornado) el.classList.add('is-tornado');
+  const remaining = state.bannerQueue.length;
+  el.innerHTML = `
+    <span class="banner-icon">${item.isTornado ? '🌪️' : iconForEvent(item.alert.event)}</span>
+    <span style="flex:1; min-width:0;">
+      <span class="banner-title">${escapeHtml(item.title)}</span>
+      <div class="banner-sub">${escapeHtml(item.sub)}</div>
+      ${remaining > 0 ? `<div class="banner-count">+${remaining} more alert${remaining>1?'s':''} waiting</div>` : ''}
+    </span>
+    <button class="banner-close" aria-label="Dismiss">✕</button>`;
+  container.appendChild(el);
+  requestAnimationFrame(()=> el.classList.add('is-shown'));
+
+  const dismiss = () => {
+    el.classList.remove('is-shown');
+    setTimeout(()=>{ el.remove(); showNextBanner(); }, 380);
+  };
+
+  el.addEventListener('click', (e)=>{
+    if(e.target.closest('.banner-close')){ dismiss(); return; }
+    openAlertDetail(item.alert);
+    dismiss();
+  });
+
+  clearTimeout(state.bannerTimer);
+  state.bannerTimer = setTimeout(dismiss, item.isTornado ? 9000 : 6500);
+}
+
+function startAlertPolling(){
+  stopAlertPolling();
+  state.pollTimer = setInterval(()=>{
+    refreshAlertsFromNetwork({ silent:false }).catch(e=> console.warn('alert poll error', e));
+  }, state.settings.alertTimingMs);
+}
+function stopAlertPolling(){ if(state.pollTimer) clearInterval(state.pollTimer); state.pollTimer = null; }
+function restartAlertPolling(){ if(state.location) startAlertPolling(); }
+
+function startConditionsPolling(){
+  stopConditionsPolling();
+  state.conditionsTimer = setInterval(()=>{
+    refreshConditionsFromNetwork().catch(e=> console.warn('conditions poll error', e));
+  }, CONDITIONS_REFRESH_MS);
+}
+function stopConditionsPolling(){ if(state.conditionsTimer) clearInterval(state.conditionsTimer); state.conditionsTimer = null; }
+
+function startClockTicker(){
+  stopClockTicker();
+  state.clockTimer = setInterval(updateLastUpdatedLabel, 1000);
+}
+function stopClockTicker(){ if(state.clockTimer) clearInterval(state.clockTimer); state.clockTimer = null; }
+
+function stopAllPolling(){ stopAlertPolling(); stopConditionsPolling(); stopClockTicker(); }
+
+async function refreshConditionsFromNetwork(){
+  if(!state.points) return;
+  try{
+    if(state.points.forecast){
+      state.forecastPeriods = await getForecastPeriods(state.points.forecast);
+      if(state.forecastPeriods[0]) state.isDaytime = !!state.forecastPeriods[0].isDaytime;
+      renderForecastStrip();
+    }
+  }catch(e){ console.warn('forecast fetch failed', e); }
+
+  try{
+    if(state.points.observationStations){
+      const stationId = await getNearestStationId(state.points.observationStations);
+      if(stationId){
+        const obs = await getLatestObservation(stationId);
+        state.currentConditions = {
+          textDescription: obs.textDescription,
+          temperatureF: obs.temperature ? cToF(obs.temperature.value) : null,
+          windMph: quantityToMph(obs.windSpeed),
+          humidity: (obs.relativeHumidity && obs.relativeHumidity.value != null) ? Math.round(obs.relativeHumidity.value) : null
+        };
+        renderConditionsCard();
+      }
+    }
+  }catch(e){ console.warn('observation fetch failed', e); }
+
+  renderRadar();
+  refreshWeatherTheme();
+}
+
+function manualRefresh(){
+  refreshAlertsFromNetwork({ silent:false }).catch(()=>{});
+  refreshConditionsFromNetwork().catch(()=>{});
+  renderRadar();
+  showToast('Refreshed');
+}
+
+document.addEventListener('visibilitychange', ()=>{
+  if(!document.hidden && state.location && state.screen === 'home'){
+    refreshAlertsFromNetwork({ silent:false }).catch(()=>{});
+  }
+});
+
+/* ============ 9. AUDIO & NOTIFICATIONS ============ */
+function getAudioCtx(){
+  if(!state.audioCtx){
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if(!AC) return null;
+    state.audioCtx = new AC();
+  }
+  return state.audioCtx;
+}
+
+function unlockAudioContext(){
+  if(state.audioUnlocked) return;
+  const ctx = getAudioCtx();
+  if(!ctx) return;
+  if(ctx.state === 'suspended') ctx.resume().catch(()=>{});
+  state.audioUnlocked = true;
+}
+
+// Each severity gets its own recognizable tone pattern, so you can tell
+// what kind of alert came in without looking at the screen.
+const TONE_STANDARD   = [{freq:880,dur:0.16,type:'sine'},{freq:988,dur:0.18,type:'sine',gap:0.02}];
+const TONE_TORNADO    = [{freq:440,dur:0.28,type:'sawtooth'},{freq:830,dur:0.28,type:'sawtooth'},{freq:440,dur:0.28,type:'sawtooth'},{freq:830,dur:0.28,type:'sawtooth'},{freq:440,dur:0.34,type:'sawtooth'}];
+const TONE_WARNING    = [{freq:660,dur:0.22,type:'square'},{freq:0,dur:0.09},{freq:660,dur:0.22,type:'square'},{freq:0,dur:0.09},{freq:660,dur:0.22,type:'square'}];
+const TONE_WATCH      = [{freq:740,dur:0.20,type:'triangle'},{freq:0,dur:0.07},{freq:740,dur:0.20,type:'triangle'}];
+const TONE_ADVISORY   = [{freq:988,dur:0.14,type:'sine'},{freq:784,dur:0.20,type:'sine',gap:0.02}];
+const TONE_STATEMENT  = [{freq:523,dur:0.16,type:'sine'},{freq:659,dur:0.16,type:'sine',gap:0.015},{freq:784,dur:0.20,type:'sine',gap:0.015}];
+const TONE_SPECIAL    = [{freq:698,dur:0.14,type:'triangle'},{freq:880,dur:0.14,type:'triangle',gap:0.03},{freq:698,dur:0.14,type:'triangle',gap:0.03}];
+const TONE_INFO       = [{freq:600,dur:0.14,type:'sine'}];
+
+const SEVERITY_TONES = {
+  warning: TONE_WARNING, watch: TONE_WATCH, advisory: TONE_ADVISORY,
+  statement: TONE_STATEMENT, special: TONE_SPECIAL, info: TONE_INFO
+};
+function toneForSeverity(sev, isTornado){
+  if(isTornado) return TONE_TORNADO;
+  return SEVERITY_TONES[sev] || TONE_STANDARD;
+}
+
+function playTonePattern(pattern, repeatOnce){
+  if(!state.settings.soundEnabled) return;
+  const ctx = getAudioCtx();
+  if(!ctx) return;
+  try{
+    const playOnce = (startT) => {
+      let tt = startT;
+      pattern.forEach(step=>{
+        if(step.freq > 0){
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = step.type || 'sine';
+          osc.frequency.setValueAtTime(step.freq, tt);
+          gain.gain.setValueAtTime(0.0001, tt);
+          gain.gain.exponentialRampToValueAtTime(0.22, tt + 0.02);
+          gain.gain.exponentialRampToValueAtTime(0.0001, tt + step.dur);
+          osc.connect(gain).connect(ctx.destination);
+          osc.start(tt);
+          osc.stop(tt + step.dur + 0.02);
+        }
+        tt += step.dur + (step.gap || 0.04);
+      });
+      return tt;
+    };
+    const endT = playOnce(ctx.currentTime + 0.02);
+    if(repeatOnce) playOnce(endT + 0.3);
+  }catch(e){ /* audio unavailable in this context */ }
+}
+
+function maybeRequestNotificationPermission(){
+  if(state.notificationPermissionAsked) return;
+  state.notificationPermissionAsked = true;
+  try{
+    if('Notification' in window && Notification.permission === 'default'){
+      Notification.requestPermission().catch(()=>{});
+    }
+  }catch(e){ /* Notification API unavailable in this preview */ }
+}
+
+function fireSystemNotification(title, body, urgent){
+  try{
+    if(!('Notification' in window) || Notification.permission !== 'granted') return;
+    const n = new Notification(title, { body, tag: urgent ? 'amt-tornado' : 'amt-alert', requireInteraction: !!urgent });
+    n.onclick = () => { window.focus(); n.close(); };
+  }catch(e){ /* system notifications not available in this preview */ }
+}
+
+// --- "Please reopen" nudge when the app is closed/backgrounded ---
+// Important limitation: this is a best-effort, client-side-only feature.
+// A real "notify me after the app is fully closed" experience needs a push
+// subscription plus a backend (see the note at the top of sw.js) — a plain
+// page's JS timers stop the instant the tab/app process is actually killed,
+// so this can't fire after a true close. What it CAN do is catch the much
+// more common case: the person backgrounds the app (switches away, locks
+// the phone, minimizes it) and leaves it backgrounded for a while. If they
+// come back before the delay elapses, the nudge is cancelled.
+const REOPEN_NUDGE_DELAY_MS = 20000;
+let reopenNudgeTimer = null;
+
+function scheduleReopenNudge(){
+  cancelReopenNudge();
+  if(!state.location) return; // nothing to nudge about before setup is done
+  reopenNudgeTimer = setTimeout(()=>{
+    if(document.hidden){
+      fireSystemNotification('AlertMyTown', 'Please reopen Alert My Town - Alerts to stay updated with us', false);
+    }
+  }, REOPEN_NUDGE_DELAY_MS);
+}
+function cancelReopenNudge(){
+  if(reopenNudgeTimer){ clearTimeout(reopenNudgeTimer); reopenNudgeTimer = null; }
+}
+document.addEventListener('visibilitychange', ()=>{
+  if(document.hidden) scheduleReopenNudge();
+  else cancelReopenNudge();
+});
+window.addEventListener('pagehide', scheduleReopenNudge);
+
+/* ============ 10. INIT ============ */
+async function init(){
+  buildClouds(6);
+  buildStars(90);
+  resizeCanvas();
+  tickParticles();
+  applyWeatherTheme(state.isDaytime ? 'clear-day' : 'clear-night');
+
+  initOnboardingScreen();
+  initLocationScreen();
+  initLoadingScreen();
+  initHomeScreen();
+  initModals();
+  initSettingsControls();
+
+  document.body.addEventListener('pointerdown', unlockAudioContext, { once:true });
+
+  const saved = await loadUserConfig();
+  if(saved && saved.settings){
+    state.settings = Object.assign({}, DEFAULT_SETTINGS, saved.settings, {
+      categoryToggles: Object.assign({}, DEFAULT_SETTINGS.categoryToggles, saved.settings.categoryToggles)
+    });
+    state.savedLocations = safeArray(saved.savedLocations);
+    document.documentElement.setAttribute('data-textsize', state.settings.textSize);
+    document.body.classList.toggle('colorblind-mode', !!state.settings.colorblind);
+    applyThemeMode();
+  }
+
+  if(saved && saved.location && saved.location.lat != null){
+    // Skip onboarding entirely and cancel its auto-advance timer so it can
+    // never fire later and knock the user back to the location screen.
+    if(state.onboardingTimer){ clearTimeout(state.onboardingTimer); state.onboardingTimer = null; }
+    stopOnboardingCycle();
+    selectLocation(saved.location); // shows the loading screen itself, then goes straight to home
+  } else {
+    startOnboardingCycle();
+    goToScreen('onboarding');
+  }
+}
+
+document.addEventListener('DOMContentLoaded', init);
+
+if('serviceWorker' in navigator){
+  window.addEventListener('load', ()=>{
+    navigator.serviceWorker.register('./sw.js').catch((e)=> console.warn('AlertMyTown: service worker registration failed', e));
+  });
+}
+  </script>
+</body>
+</html>
